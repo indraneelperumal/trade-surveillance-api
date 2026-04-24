@@ -180,9 +180,9 @@ def _make_compliance_memo_node(profile: str):
             prompt  = build_user_prompt(state)
 
             response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-sonnet-4-6",
                 temperature=0,
-                max_tokens=600,
+                max_tokens=1800,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
             )
