@@ -9,3 +9,5 @@ anthropic
 streamlit
 python-dotenv
 boto3
+plotly
+yfinance
