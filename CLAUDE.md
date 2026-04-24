@@ -21,6 +21,9 @@ result = investigate_trade('TRADE_ID_HERE', auto_approve=True)
 print(result['verdict'], result['compliance_memo'])
 "
 
+# Run the Streamlit dashboard (Phase 4)
+streamlit run dashboard.py
+
 # Set up Glue catalog + Athena view (idempotent, run once per environment)
 python step1_setup_glue_athena.py
 ```
@@ -49,6 +52,12 @@ Athena view  → trade_surv.raw_trades_v                         ↓
                                                     → 4-node LangGraph StateGraph
                                                     → Claude Haiku compliance memo
                                                     S3: memos/{trade_id}.json
+                                                               ↓
+                                                    dashboard.py (Phase 4)
+                                                    streamlit run dashboard.py
+                                                    → reads anomalies.parquet + memos/
+                                                    → live prices via yfinance
+                                                    → triggers investigate_trade() on demand
 ```
 
 **`lambda_function.py`** — Generates synthetic trades for 7 symbols (AAPL, MSFT, TSLA, AMZN, NVDA, GOOGL, META) with price random-walks, heavy-tailed volumes, and configurable off-hours/OTC ratios. Publishes N_TRADES records per invocation to the Kinesis stream named by `STREAM_NAME`. Key env vars: `STREAM_NAME`, `NUM_TRADES` (default 5), `EXT_HOURS_PCT` (default 0.10), `OTC_PCT` (default 0.15).
@@ -62,6 +71,8 @@ Athena view  → trade_surv.raw_trades_v                         ↓
 **`anomaly_model.py`** — Reads `features/features.parquet`, injects 50 labelled synthetic anomalies for recall validation, trains `IsolationForest(n_estimators=200, contamination=0.08, random_state=42)` on the full frame, scores every trade, runs SHAP TreeExplainer on flagged trades only, classifies anomaly type by rule, validates synthetic recall (target ≥ 80%), removes synthetics, and writes three artefacts to S3. Achieved: 88% synthetic recall, ~12,100 anomalies flagged (8% of 152,010 trades).
 
 **`agents/`** — Phase 3 LangGraph orchestrator. Entry point: `from agents import investigate_trade`. Requires `ANTHROPIC_API_KEY` in `.env` in addition to `AWS_PROFILE`.
+
+**`dashboard.py`** — Phase 4 Streamlit UI. Single-file, ~650 lines. Reads `processed/anomalies.parquet` and `memos/` from S3 on startup (cached via `@st.cache_data`), fetches live prices from yfinance, and calls `investigate_trade()` on demand from Tab 2. Session 1 shipped Tab 1 (Overview) fully; Tabs 2–4 are stubs pending future sessions.
 
 ## AWS Resources
 
@@ -198,3 +209,53 @@ To score new trades against the saved model: load `model/medians.json` for NaN-f
 - Always filter on `dt` to prune partitions: `WHERE dt = DATE '2024-01-15'`
 - `timestamp` is a reserved word in Athena/Presto — always double-quote it: `"timestamp"`
 - Numeric columns in the raw table may be inferred as strings by the Glue JSON classifier; the `raw_trades_v` view explicitly casts them to `DOUBLE`/`BIGINT`
+
+## Dashboard Details (Phase 4)
+
+`dashboard.py` is a single-file Streamlit app. `st.set_page_config()` must always be the **first** Streamlit call in `main()`.
+
+### S3 reads
+
+Dashboard uses `boto3.client("s3")` (no `profile_name` kwarg) — it inherits `AWS_PROFILE` from the environment via `load_dotenv()` at module top. Do not add `profile_name`; it would break when running under IAM roles or CI.
+
+### Caching strategy
+
+| Function | TTL | Notes |
+|---|---|---|
+| `load_anomalies()` | 300 s | Full 40-col parquet, ~40 MB |
+| `load_memos_list()` | 300 s | S3 key listing only; call `.clear()` after new investigation |
+| `load_memo(trade_id)` | 300 s | Single JSON per trade |
+| `get_live_prices(symbols)` | 60 s | `symbols` must be a **tuple** (hashable); `.clear()` on 60s timer |
+| `get_stock_history(symbol, period)` | 300 s | yfinance OHLCV |
+
+### Color system
+
+All colors are module-level constants (`BG_PRIMARY`, `BG_CARD`, `BG_CARD2`, `BORDER`, `GREEN`, `RED`, `YELLOW`, `BLUE`, `TEXT`, `TEXT_DIM`, `PURPLE`). Never use 8-character hex (`#RRGGBBAA`) — use the `hex_to_rgba(hex, alpha)` helper for transparency. All Plotly figures share `PLOTLY_LAYOUT = dict(paper_bgcolor=BG_PRIMARY, plot_bgcolor=BG_CARD, font_color=TEXT, ...)`.
+
+### Key helpers
+
+- `hex_to_rgba(hex_color, alpha) -> str` — converts `#RRGGBB` to `rgba(r,g,b,a)`
+- `get_severity(anomaly_type) -> str` — maps type string to `HIGH/MEDIUM/LOW/NONE`
+- `run_investigation(trade_id) -> dict` — wraps `investigate_trade(auto_approve=True)`; returns `{"verdict":"ERROR",...}` on any exception
+
+### Session state keys
+
+Initialised in `main()` before any tab renders:
+
+| Key | Type | Purpose |
+|---|---|---|
+| `verdicts` | `dict` | `{trade_id: verdict}` for investigated trades |
+| `memos` | `dict` | `{trade_id: memo_dict}` cache for inline rendering |
+| `open_memos` | `set` | Trade IDs whose memo card is currently expanded |
+| `selected_symbol` | `str` | Symbol filter shared across tabs |
+| `investigated_today` | `set` | Trade IDs investigated in this session |
+| `last_ticker_refresh` | `float` | `time.time()` of last yfinance refresh |
+
+### Tab build status
+
+| Tab | Label | Status |
+|---|---|---|
+| 1 | 📊 Overview | Complete — progress card, KPIs, charts, escalation feed |
+| 2 | 🚨 Flagged Trades | Stub — to be built Session 2 |
+| 3 | 📋 Reports | Stub — to be built Session 3 |
+| 4 | 📈 Market Context | Stub — to be built Session 4 |
