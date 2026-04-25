@@ -986,14 +986,6 @@ def main():
     prices = get_live_prices(tuple(SYMBOLS))
     render_top_bar(prices)
 
-    # Global search bar
-    st.text_input(
-        "",
-        placeholder="Search traders, symbols, trade IDs...",
-        key="global_search",
-        label_visibility="collapsed",
-    )
-
     render_market_panel()
 
     # Tabs
