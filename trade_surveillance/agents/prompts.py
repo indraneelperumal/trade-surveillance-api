@@ -88,10 +88,10 @@ evidence_points must contain EXACTLY 3 entries — pick the 3 most compliance-re
 
 
 def build_user_prompt(state: dict) -> str:
-    raw  = state.get("raw_trade", {})
-    th   = state.get("trader_history", {})
-    mc   = state.get("market_context", {})
-    rm   = state.get("rule_match", {})
+    raw = state.get("raw_trade", {})
+    th = state.get("trader_history", {})
+    mc = state.get("market_context", {})
+    rm = state.get("rule_match", {})
 
     shap_raw = raw.get("top_3_shap_features")
     if shap_raw:
@@ -103,7 +103,7 @@ def build_user_prompt(state: dict) -> str:
         shap_features = []
 
     matched_rules = rm.get("matched_rules", [])
-    severity      = rm.get("severity", "NONE")
+    severity = rm.get("severity", "NONE")
 
     lines = [
         "=== TRADE IDENTIFIERS ===",

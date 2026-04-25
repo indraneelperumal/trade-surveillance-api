@@ -1,5 +1,11 @@
 .env
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 awsvenv/

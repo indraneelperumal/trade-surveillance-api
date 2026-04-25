@@ -10,8 +10,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from typing_extensions import TypedDict
 
-from agents.prompts import SYSTEM_PROMPT, build_user_prompt
-from agents.tools import (
+from trade_surveillance.agents.prompts import SYSTEM_PROMPT, build_user_prompt
+from trade_surveillance.agents.tools import (
     compute_market_context,
     compute_trader_stats,
     load_anomaly_record,
@@ -37,15 +37,13 @@ class TradeState(TypedDict, total=False):
     error: str
 
 
-# ── Node 1 ────────────────────────────────────────────────────────────────────
-
 def _make_trade_context_node(profile: str):
     def trade_context_node(state: TradeState) -> dict:
         try:
-            record     = load_anomaly_record(state["trade_id"], profile)
-            trader_id  = record.get("trader_id")
+            record = load_anomaly_record(state["trade_id"], profile)
+            trader_id = record.get("trader_id")
             history_df = load_trader_history(trader_id, profile) if trader_id else pd.DataFrame()
-            stats      = compute_trader_stats(history_df)
+            stats = compute_trader_stats(history_df)
 
             shap_raw = record.get("top_3_shap_features")
             if shap_raw:
@@ -57,11 +55,11 @@ def _make_trade_context_node(profile: str):
                 shap_features = []
 
             return {
-                "raw_trade":     record,
+                "raw_trade": record,
                 "trader_history": stats,
                 "anomaly_score": float(record.get("anomaly_score", 0)),
-                "anomaly_rank":  float(record.get("anomaly_rank", 0)),
-                "anomaly_type":  str(record.get("anomaly_type") or "unknown"),
+                "anomaly_rank": float(record.get("anomaly_rank", 0)),
+                "anomaly_type": str(record.get("anomaly_type") or "unknown"),
                 "shap_features": shap_features,
             }
         except Exception as exc:
@@ -70,28 +68,24 @@ def _make_trade_context_node(profile: str):
     return trade_context_node
 
 
-# ── Node 2 ────────────────────────────────────────────────────────────────────
-
 def _make_market_context_node(profile: str):
     def market_context_node(state: TradeState) -> dict:
         if state.get("error"):
             return {}
         try:
-            raw       = state.get("raw_trade", {})
-            symbol    = raw.get("symbol")
+            raw = state.get("raw_trade", {})
+            symbol = raw.get("symbol")
             timestamp = raw.get("timestamp")
             if not symbol or timestamp is None:
                 return {"market_context": {}}
             window_df = load_market_window(symbol, pd.Timestamp(timestamp), profile)
-            context   = compute_market_context(window_df, raw)
+            context = compute_market_context(window_df, raw)
             return {"market_context": context}
         except Exception as exc:
             return {"error": str(exc)}
 
     return market_context_node
 
-
-# ── Node 3 ────────────────────────────────────────────────────────────────────
 
 def _make_regulatory_screen_node():
     def regulatory_screen_node(state: TradeState) -> dict:
@@ -100,11 +94,11 @@ def _make_regulatory_screen_node():
         try:
             raw = state.get("raw_trade", {})
 
-            z_price  = float(raw.get("z_score_price", 0)  or 0)
-            z_vol    = float(raw.get("z_score_volume", 0) or 0)
-            off_hrs  = bool(raw.get("is_off_hours", False))
-            d_imb    = abs(float(raw.get("depth_imbalance", 0) or 0))
-            bsr      = float(raw.get("trader_buy_sell_ratio", 0) or 0)
+            z_price = float(raw.get("z_score_price", 0) or 0)
+            z_vol = float(raw.get("z_score_volume", 0) or 0)
+            off_hrs = bool(raw.get("is_off_hours", False))
+            d_imb = abs(float(raw.get("depth_imbalance", 0) or 0))
+            bsr = float(raw.get("trader_buy_sell_ratio", 0) or 0)
 
             matched: list[str] = []
             if z_price > 4:
@@ -134,12 +128,10 @@ def _make_regulatory_screen_node():
     return regulatory_screen_node
 
 
-# ── Node 4a ───────────────────────────────────────────────────────────────────
-
 def human_review_node(state: TradeState) -> dict:
-    raw  = state.get("raw_trade", {})
-    rm   = state.get("rule_match", {})
-    th   = state.get("trader_history", {})
+    raw = state.get("raw_trade", {})
+    rm = state.get("rule_match", {})
+    th = state.get("trader_history", {})
     print("\n" + "=" * 60)
     print("  HIGH SEVERITY TRADE — HUMAN REVIEW REQUIRED")
     print("=" * 60)
@@ -158,8 +150,6 @@ def human_review_node(state: TradeState) -> dict:
     return {}
 
 
-# ── Node 4b ───────────────────────────────────────────────────────────────────
-
 def _make_compliance_memo_node(profile: str):
     def compliance_memo_node(state: TradeState) -> dict:
         if state.get("error"):
@@ -176,8 +166,8 @@ def _make_compliance_memo_node(profile: str):
 
         try:
             api_key = os.environ.get("ANTHROPIC_API_KEY")
-            client  = anthropic.Anthropic(api_key=api_key)
-            prompt  = build_user_prompt(state)
+            client = anthropic.Anthropic(api_key=api_key)
+            prompt = build_user_prompt(state)
 
             response = client.messages.create(
                 model="claude-sonnet-4-6",
@@ -188,7 +178,6 @@ def _make_compliance_memo_node(profile: str):
             )
             raw_text = response.content[0].text.strip()
 
-            # Strip markdown code fences if present
             if raw_text.startswith("```"):
                 raw_text = raw_text.split("```")[1]
                 if raw_text.startswith("json"):
@@ -209,8 +198,7 @@ def _make_compliance_memo_node(profile: str):
                     "data_gaps": "Structured response unavailable.",
                 }
 
-            # Override verdict based on severity
-            severity   = state.get("rule_match", {}).get("severity", "NONE")
+            severity = state.get("rule_match", {}).get("severity", "NONE")
             confidence = memo.get("confidence", "LOW")
 
             if severity == "HIGH" and confidence == "HIGH":
@@ -227,7 +215,7 @@ def _make_compliance_memo_node(profile: str):
 
             return {
                 "compliance_memo": memo,
-                "verdict":    memo["verdict"],
+                "verdict": memo["verdict"],
                 "confidence": memo.get("confidence", "LOW"),
             }
         except Exception as exc:
@@ -237,13 +225,11 @@ def _make_compliance_memo_node(profile: str):
     return compliance_memo_node
 
 
-# ── Graph builder ─────────────────────────────────────────────────────────────
-
 def build_graph(profile: str, auto_approve: bool = False):
-    trade_context_node    = _make_trade_context_node(profile)
-    market_context_node   = _make_market_context_node(profile)
+    trade_context_node = _make_trade_context_node(profile)
+    market_context_node = _make_market_context_node(profile)
     regulatory_screen_node = _make_regulatory_screen_node()
-    compliance_memo_node  = _make_compliance_memo_node(profile)
+    compliance_memo_node = _make_compliance_memo_node(profile)
 
     def severity_router(state: TradeState) -> str:
         if state.get("error"):
@@ -254,10 +240,10 @@ def build_graph(profile: str, auto_approve: bool = False):
         return "compliance_memo_node"
 
     graph = StateGraph(TradeState)
-    graph.add_node("trade_context_node",     trade_context_node)
-    graph.add_node("market_context_node",    market_context_node)
+    graph.add_node("trade_context_node", trade_context_node)
+    graph.add_node("market_context_node", market_context_node)
     graph.add_node("regulatory_screen_node", regulatory_screen_node)
-    graph.add_node("compliance_memo_node",   compliance_memo_node)
+    graph.add_node("compliance_memo_node", compliance_memo_node)
 
     if not auto_approve:
         graph.add_node("human_review_node", human_review_node)
@@ -270,7 +256,7 @@ def build_graph(profile: str, auto_approve: bool = False):
         "regulatory_screen_node",
         severity_router,
         {
-            "human_review_node":    "human_review_node" if not auto_approve else "compliance_memo_node",
+            "human_review_node": "human_review_node" if not auto_approve else "compliance_memo_node",
             "compliance_memo_node": "compliance_memo_node",
         },
     )
@@ -279,8 +265,6 @@ def build_graph(profile: str, auto_approve: bool = False):
     checkpointer = MemorySaver()
     return graph.compile(checkpointer=checkpointer)
 
-
-# ── Public entry point ────────────────────────────────────────────────────────
 
 def investigate_trade(
     trade_id: str,
@@ -303,7 +287,7 @@ def investigate_trade(
     print(f"  profile:      {profile}")
     print(f"  auto_approve: {auto_approve}")
 
-    graph  = build_graph(profile, auto_approve)
+    graph = build_graph(profile, auto_approve)
     config = {"configurable": {"thread_id": trade_id}}
 
     result = graph.invoke({"trade_id": trade_id}, config)

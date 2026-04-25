@@ -11,7 +11,13 @@ import streamlit as st
 import yfinance as yf
 from dotenv import load_dotenv
 
+from trade_surveillance.config import get_settings
+
 load_dotenv()
+_SETTINGS = get_settings()
+BUCKET = _SETTINGS.s3_bucket
+ANOMALIES_KEY = _SETTINGS.anomalies_key
+MEMOS_PREFIX = _SETTINGS.memos_prefix
 
 # ── Color constants ────────────────────────────────────────────────────────────
 BG_PRIMARY = "#0d1117"
@@ -36,7 +42,6 @@ TYPE_COLORS = {
 }
 
 SYMBOLS = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"]
-BUCKET  = "trade-surveillance-bucket"
 
 PLOTLY_LAYOUT = dict(
     paper_bgcolor=BG_PRIMARY,
@@ -60,10 +65,10 @@ def hex_to_rgba(hex_color: str, alpha: float) -> str:
 def load_anomalies() -> pd.DataFrame:
     try:
         s3  = boto3.client("s3")
-        obj = s3.get_object(Bucket=BUCKET, Key="processed/anomalies.parquet")
+        obj = s3.get_object(Bucket=BUCKET, Key=ANOMALIES_KEY)
         return pd.read_parquet(io.BytesIO(obj["Body"].read()))
     except Exception as exc:
-        st.error(f"Failed to load anomalies.parquet: {exc}")
+        st.error(f"Failed to load anomalies data: {exc}")
         st.stop()
 
 
@@ -71,7 +76,7 @@ def load_anomalies() -> pd.DataFrame:
 def load_memos_list() -> list:
     try:
         s3  = boto3.client("s3")
-        res = s3.list_objects_v2(Bucket=BUCKET, Prefix="memos/")
+        res = s3.list_objects_v2(Bucket=BUCKET, Prefix=f"{MEMOS_PREFIX}/")
         out = []
         for obj in res.get("Contents", []):
             if obj["Key"].endswith(".json"):
@@ -90,7 +95,7 @@ def load_memos_list() -> list:
 def load_memo(trade_id: str) -> dict:
     try:
         s3  = boto3.client("s3")
-        obj = s3.get_object(Bucket=BUCKET, Key=f"memos/{trade_id}.json")
+        obj = s3.get_object(Bucket=BUCKET, Key=f"{MEMOS_PREFIX}/{trade_id}.json")
         return json.loads(obj["Body"].read())
     except Exception:
         return {}
@@ -100,7 +105,7 @@ def load_memo(trade_id: str) -> dict:
 def load_trade_summary() -> pd.DataFrame:
     try:
         s3  = boto3.client("s3")
-        obj = s3.get_object(Bucket=BUCKET, Key="processed/anomalies.parquet")
+        obj = s3.get_object(Bucket=BUCKET, Key=ANOMALIES_KEY)
         return pd.read_parquet(
             io.BytesIO(obj["Body"].read()),
             columns=[
@@ -150,7 +155,8 @@ def get_stock_history(symbol: str, period: str = "1mo") -> pd.DataFrame:
 
 def run_investigation(trade_id: str) -> dict:
     try:
-        from agents import investigate_trade
+        from trade_surveillance import investigate_trade
+
         return investigate_trade(trade_id, auto_approve=True)
     except Exception as exc:
         return {"verdict": "ERROR", "error": str(exc), "compliance_memo": {}}
