@@ -1,0 +1,55 @@
+"""Central settings from environment (with sensible defaults for local demo)."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from functools import lru_cache
+
+from dotenv import load_dotenv
+
+
+@dataclass(frozen=True)
+class Settings:
+    s3_bucket: str
+    raw_prefix: str
+    features_key: str
+    anomalies_key: str
+    model_key: str
+    medians_key: str
+    memos_prefix: str
+
+
+def _env_str(name: str, default: str) -> str:
+    val = os.environ.get(name)
+    return default if val is None or val == "" else val
+
+
+@lru_cache
+def get_settings() -> Settings:
+    load_dotenv()
+    return Settings(
+        s3_bucket=_env_str("TSP_S3_BUCKET", "trade-surveillance-bucket"),
+        raw_prefix=_env_str("TSP_RAW_PREFIX", "raw/"),
+        features_key=_env_str("TSP_FEATURES_KEY", "features/features.parquet"),
+        anomalies_key=_env_str("TSP_ANOMALIES_KEY", "processed/anomalies.parquet"),
+        model_key=_env_str("TSP_MODEL_KEY", "model/isolation_forest.pkl"),
+        medians_key=_env_str("TSP_MEDIANS_KEY", "model/medians.json"),
+        memos_prefix=_env_str("TSP_MEMOS_PREFIX", "memos"),
+    )
+
+
+def clear_settings_cache() -> None:
+    """Used in tests to pick up changed environment variables."""
+    get_settings.cache_clear()
+
+
+def require_aws_profile() -> str:
+    """Raise if AWS_PROFILE is missing (batch jobs and agents use named profiles)."""
+    load_dotenv()
+    profile = os.environ.get("AWS_PROFILE")
+    if not profile:
+        raise ValueError(
+            "AWS_PROFILE is not set. Add it to .env or export it in your shell."
+        )
+    return profile

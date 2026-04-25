@@ -1,46 +1,19 @@
 import collections
 import io
 import json
-import os
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from uuid import uuid4
 
-import boto3
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from botocore.config import Config
-from dotenv import load_dotenv
 from tqdm import tqdm
 
-BUCKET = "trade-surveillance-bucket"
-RAW_PREFIX = "raw/"
-FEATURES_KEY = "features/features.parquet"
+from trade_surveillance.aws.s3 import make_s3_client, upload_bytes_atomic
+from trade_surveillance.config import get_settings, require_aws_profile
 
 _bad_lines: collections.deque = collections.deque()  # thread-safe append
-
-
-def load_env() -> str:
-    load_dotenv()
-    profile = os.environ.get("AWS_PROFILE")
-    if not profile:
-        raise ValueError(
-            "AWS_PROFILE is not set. Add it to .env or export it in your shell."
-        )
-    return profile
-
-
-def _make_s3_client(profile: str):
-    session = boto3.Session(profile_name=profile)
-    return session.client(
-        "s3",
-        config=Config(
-            max_pool_connections=32,
-            retries={"max_attempts": 5, "mode": "adaptive"},
-        ),
-    )
 
 
 def list_s3_keys(s3_client, bucket: str, prefix: str) -> list:
@@ -78,9 +51,10 @@ def download_and_parse(s3_client, bucket: str, key: str) -> list:
 
 
 def load_raw_data(profile: str) -> pd.DataFrame:
+    s = get_settings()
     print("\n[1/4] Listing S3 keys ...")
-    s3 = _make_s3_client(profile)
-    keys = list_s3_keys(s3, BUCKET, RAW_PREFIX)
+    s3 = make_s3_client(profile, max_pool_connections=32)
+    keys = list_s3_keys(s3, s.s3_bucket, s.raw_prefix)
     print(f"      Found {len(keys):,} .json files")
 
     print(f"[2/4] Downloading & parsing ({len(keys):,} files, 32 workers) ...")
@@ -88,7 +62,7 @@ def load_raw_data(profile: str) -> pd.DataFrame:
     zero_record_files = 0
 
     with ThreadPoolExecutor(max_workers=32) as pool:
-        futures = {pool.submit(download_and_parse, s3, BUCKET, k): k for k in keys}
+        futures = {pool.submit(download_and_parse, s3, s.s3_bucket, k): k for k in keys}
         for future in tqdm(as_completed(futures), total=len(futures), unit="file"):
             result = future.result()
             if result:
@@ -110,7 +84,6 @@ def load_raw_data(profile: str) -> pd.DataFrame:
             "Check for S3 access issues or data loss."
         )
 
-    # Reduce memory and speed up groupby
     for col in ("symbol", "exchange", "side", "order_type"):
         if col in df.columns:
             df[col] = df[col].astype("category")
@@ -121,24 +94,16 @@ def load_raw_data(profile: str) -> pd.DataFrame:
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     print("[3/4] Engineering features ...")
 
-    # Normalize timestamp to UTC
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df["date"] = df["timestamp"].dt.date
 
-    # ── 1. spread ────────────────────────────────────────────────────────────
     df["spread"] = df["ask_price"] - df["bid_price"]
-
-    # ── 2. mid_price ─────────────────────────────────────────────────────────
     df["mid_price"] = (df["bid_price"] + df["ask_price"]) / 2
+    df["relative_spread"] = df["spread"] / df["mid_price"]
 
-    # ── 3. relative_spread ───────────────────────────────────────────────────
-    df["relative_spread"] = df["spread"] / df["mid_price"]  # NaN if mid_price=0
-
-    # ── 4. depth_imbalance ───────────────────────────────────────────────────
     size_sum = df["bid_size"] + df["ask_size"]
-    df["depth_imbalance"] = (df["bid_size"] - df["ask_size"]) / size_sum  # NaN if 0
+    df["depth_imbalance"] = (df["bid_size"] - df["ask_size"]) / size_sum
 
-    # ── 5 & 6. z_score_price, z_score_volume (ddof=1) ────────────────────────
     grp = df.groupby(["symbol", "date"], observed=True)
     df["z_score_price"] = grp["price"].transform(
         lambda x: (x - x.mean()) / x.std(ddof=1)
@@ -147,23 +112,16 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         lambda x: (x - x.mean()) / x.std(ddof=1)
     )
 
-    # ── 7. trader_volume_share ────────────────────────────────────────────────
-    # Denominator: total volume per symbol per day (not per trader)
     total_vol = df.groupby(["symbol", "date"], observed=True)["volume"].transform("sum")
     df["trader_volume_share"] = df["volume"] / total_vol
 
-    # ── 8. is_off_hours ───────────────────────────────────────────────────────
-    # Convert to US/Eastern so pandas handles EST/EDT offsets automatically.
-    # NYSE regular hours: 09:30–16:00 Eastern (handles both EST and EDT).
     eastern = df["timestamp"].dt.tz_convert("US/Eastern")
     hour = eastern.dt.hour
     minute = eastern.dt.minute
     df["is_off_hours"] = (hour < 9) | ((hour == 9) & (minute < 30)) | (hour >= 16)
 
-    # ── 9. is_otc ─────────────────────────────────────────────────────────────
     df["is_otc"] = df["exchange"] == "OTC"
 
-    # ── 10. inter_arrival_time ────────────────────────────────────────────────
     df = df.sort_values(["symbol", "timestamp"]).reset_index(drop=True)
     df["inter_arrival_time"] = (
         df.groupby("symbol", observed=True)["timestamp"]
@@ -171,7 +129,6 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         .dt.total_seconds()
     )
 
-    # ── 11. return_vs_prev ────────────────────────────────────────────────────
     prev_price = df.groupby("symbol", observed=True)["price"].shift(1)
     df["return_vs_prev"] = np.where(
         (prev_price > 0) & (df["price"] > 0),
@@ -179,7 +136,6 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         np.nan,
     )
 
-    # ── 12. trader_buy_sell_ratio ─────────────────────────────────────────────
     known_sides = {"Buy", "Sell"}
     unexpected = df[~df["side"].isin(known_sides)]
     if len(unexpected) > 0:
@@ -189,7 +145,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     valid = df[df["side"].isin(known_sides)].copy()
-    valid["date_"] = valid["date"]  # avoid groupby conflict
+    valid["date_"] = valid["date"]
     buy_counts = (
         valid[valid["side"] == "Buy"]
         .groupby(["trader_id", "date_"])
@@ -214,46 +170,30 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def write_features(df: pd.DataFrame, profile: str) -> None:
     print("[4/4] Writing features.parquet to S3 ...")
-    s3 = _make_s3_client(profile)
+    s = get_settings()
+    s3 = make_s3_client(profile, max_pool_connections=32)
 
-    # Serialize to in-memory Parquet buffer
     table = pa.Table.from_pandas(df)
     buf = io.BytesIO()
     pq.write_table(table, buf, compression="snappy")
-    size_mb = buf.tell() / 1_048_576  # capture size before seek
+    size_mb = buf.tell() / 1_048_576
     buf.seek(0)
+    data = buf.read()
+    upload_bytes_atomic(s3, s.s3_bucket, s.features_key, data)
 
-    # Write to temp key first, then atomic copy to final key
-    tmp_key = f"features/features_tmp_{uuid4()}.parquet"
-    final_key = FEATURES_KEY
-
-    try:
-        s3.put_object(Bucket=BUCKET, Key=tmp_key, Body=buf)
-        s3.copy_object(
-            Bucket=BUCKET,
-            CopySource={"Bucket": BUCKET, "Key": tmp_key},
-            Key=final_key,
-        )
-        s3.delete_object(Bucket=BUCKET, Key=tmp_key)
-    except Exception:
-        try:
-            s3.delete_object(Bucket=BUCKET, Key=tmp_key)
-        except Exception:
-            pass
-        raise
-
-    print(f"      Written: s3://{BUCKET}/{final_key}")
+    print(f"      Written: s3://{s.s3_bucket}/{s.features_key}")
     print(f"      Rows: {len(df):,}  |  Size: {size_mb:.1f} MB  |  Compression: snappy")
 
 
-def main():
+def main() -> None:
     print("=" * 60)
-    print("  feature_engineering.py")
+    print("  trade_surveillance.pipelines.feature_engineering")
     print("=" * 60)
 
-    profile = load_env()
-    print(f"  Source      : s3://{BUCKET}/{RAW_PREFIX}")
-    print(f"  Output      : s3://{BUCKET}/{FEATURES_KEY}")
+    profile = require_aws_profile()
+    s = get_settings()
+    print(f"  Source      : s3://{s.s3_bucket}/{s.raw_prefix}")
+    print(f"  Output      : s3://{s.s3_bucket}/{s.features_key}")
 
     df = load_raw_data(profile)
     df = engineer_features(df)

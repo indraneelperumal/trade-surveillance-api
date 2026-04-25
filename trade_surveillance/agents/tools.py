@@ -2,67 +2,25 @@ import functools
 import io
 import json
 import warnings
-from uuid import uuid4
 
-import boto3
 import pandas as pd
-from botocore.config import Config
 
-BUCKET        = "trade-surveillance-bucket"
-ANOMALIES_KEY = "processed/anomalies.parquet"
-FEATURES_KEY  = "features/features.parquet"
-MEMOS_PREFIX  = "memos"
-
-
-def _make_s3_client(profile: str):
-    session = boto3.Session(profile_name=profile)
-    return session.client(
-        "s3",
-        config=Config(
-            max_pool_connections=10,
-            retries={"max_attempts": 5, "mode": "adaptive"},
-        ),
-    )
-
-
-def _s3_download_parquet(profile: str, key: str) -> pd.DataFrame:
-    s3 = _make_s3_client(profile)
-    buf = io.BytesIO()
-    s3.download_fileobj(BUCKET, key, buf)
-    buf.seek(0)
-    return pd.read_parquet(buf)
-
-
-def _s3_upload(s3_client, bucket: str, final_key: str, data: bytes) -> None:
-    """Upload bytes via temp-key + copy_object for safe concurrent overwrites."""
-    prefix, _, fname = final_key.rpartition("/")
-    tmp_key = f"{prefix}/tmp_{uuid4()}_{fname}" if prefix else f"tmp_{uuid4()}_{fname}"
-    try:
-        s3_client.put_object(Bucket=bucket, Key=tmp_key, Body=data)
-        s3_client.copy_object(
-            Bucket=bucket,
-            CopySource={"Bucket": bucket, "Key": tmp_key},
-            Key=final_key,
-        )
-        s3_client.delete_object(Bucket=bucket, Key=tmp_key)
-    except Exception:
-        try:
-            s3_client.delete_object(Bucket=bucket, Key=tmp_key)
-        except Exception as cleanup_exc:
-            warnings.warn(f"Failed to delete temp key {tmp_key}: {cleanup_exc}")
-        raise
+from trade_surveillance.aws.s3 import download_parquet, make_s3_client, upload_bytes_atomic
+from trade_surveillance.config import get_settings
 
 
 @functools.lru_cache(maxsize=None)
 def _load_anomalies_df(profile: str) -> pd.DataFrame:
-    """Download processed/anomalies.parquet once; cached by profile."""
-    return _s3_download_parquet(profile, ANOMALIES_KEY)
+    s = get_settings()
+    s3 = make_s3_client(profile)
+    return download_parquet(s3, s.s3_bucket, s.anomalies_key)
 
 
 @functools.lru_cache(maxsize=None)
 def _load_features_df(profile: str) -> pd.DataFrame:
-    """Download features/features.parquet once; cached by profile."""
-    return _s3_download_parquet(profile, FEATURES_KEY)
+    s = get_settings()
+    s3 = make_s3_client(profile)
+    return download_parquet(s3, s.s3_bucket, s.features_key)
 
 
 def load_anomaly_record(trade_id: str, profile: str) -> dict:
@@ -136,8 +94,8 @@ def compute_market_context(window_df: pd.DataFrame, trade: dict) -> dict:
             "price_deviation_from_window_mean": 0.0,
         }
     avg_volume = float(window_df["volume"].mean()) if "volume" in window_df.columns else 0.0
-    avg_price  = float(window_df["price"].mean())  if "price"  in window_df.columns else 0.0
-    trade_vol  = float(trade.get("volume", 0) or 0)
+    avg_price = float(window_df["price"].mean()) if "price" in window_df.columns else 0.0
+    trade_vol = float(trade.get("volume", 0) or 0)
     trade_price = float(trade.get("price", 0) or 0)
     volume_spike = trade_vol > 2 * avg_volume if avg_volume > 0 else False
     price_dev = (trade_price - avg_price) / avg_price if avg_price > 0 else 0.0
@@ -151,7 +109,8 @@ def compute_market_context(window_df: pd.DataFrame, trade: dict) -> dict:
 
 
 def upload_memo_to_s3(trade_id: str, memo: dict, profile: str) -> None:
-    s3 = _make_s3_client(profile)
-    final_key = f"{MEMOS_PREFIX}/{trade_id}.json"
+    s = get_settings()
+    s3 = make_s3_client(profile)
+    final_key = f"{s.memos_prefix}/{trade_id}.json"
     data = json.dumps(memo, indent=2, default=str).encode("utf-8")
-    _s3_upload(s3, BUCKET, final_key, data)
+    upload_bytes_atomic(s3, s.s3_bucket, final_key, data)

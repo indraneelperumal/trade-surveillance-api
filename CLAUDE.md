@@ -5,30 +5,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install dependencies
+# Install package + dependencies (editable install from pyproject.toml)
 pip install -r requirements.txt
 
 # Run feature engineering pipeline (reads S3, writes features.parquet)
-python feature_engineering.py
+python -m trade_surveillance.pipelines.feature_engineering
 
 # Run anomaly detection (reads features.parquet, writes anomalies.parquet + model artefacts)
-python anomaly_model.py
+python -m trade_surveillance.pipelines.anomaly_model
 
 # Investigate a single flagged trade (Phase 3 — LangGraph orchestrator)
 python -c "
-from agents import investigate_trade
+from trade_surveillance import investigate_trade
 result = investigate_trade('TRADE_ID_HERE', auto_approve=True)
 print(result['verdict'], result['compliance_memo'])
 "
 
 # Run the Streamlit dashboard (Phase 4)
-streamlit run dashboard.py
+streamlit run apps/dashboard.py
 
 # Set up Glue catalog + Athena view (idempotent, run once per environment)
 python step1_setup_glue_athena.py
 ```
 
-AWS credentials are resolved via `AWS_PROFILE` in `.env`. The `.env` file must be present; the script raises `ValueError` immediately if `AWS_PROFILE` is missing.
+AWS credentials are resolved via `AWS_PROFILE` in `.env`. The `.env` file must be present; the feature pipeline raises `ValueError` immediately if `AWS_PROFILE` is missing.
+
+Optional S3 layout overrides (defaults match the demo bucket): `TSP_S3_BUCKET`, `TSP_RAW_PREFIX`, `TSP_FEATURES_KEY`, `TSP_ANOMALIES_KEY`, `TSP_MODEL_KEY`, `TSP_MEDIANS_KEY`, `TSP_MEMOS_PREFIX`. See `.env.example`.
 
 ## Pipeline Architecture
 
@@ -39,22 +41,22 @@ lambda_function.py          lambda_producer.py
 (Kinesis producer)    →     (Kinesis → S3)         →   S3: raw/YYYY/MM/DD/*.json
   ↓ env: STREAM_NAME          ↓ env: BUCKET_NAME
 
-step1_setup_glue_athena.py                          feature_engineering.py
+step1_setup_glue_athena.py                          trade_surveillance.pipelines.feature_engineering
 Glue crawler → trade_surv.raw_trades       →        S3: features/features.parquet
 Athena view  → trade_surv.raw_trades_v                         ↓
-                                                    anomaly_model.py
+                                                    trade_surveillance.pipelines.anomaly_model
                                                     S3: processed/anomalies.parquet
                                                     S3: model/isolation_forest.pkl
                                                     S3: model/medians.json
                                                                ↓
-                                                    agents/orchestrator.py (Phase 3)
+                                                    trade_surveillance.agents.orchestrator (Phase 3)
                                                     investigate_trade(trade_id)
                                                     → 4-node LangGraph StateGraph
                                                     → Claude Haiku compliance memo
                                                     S3: memos/{trade_id}.json
                                                                ↓
-                                                    dashboard.py (Phase 4)
-                                                    streamlit run dashboard.py
+                                                    apps/dashboard.py (Phase 4)
+                                                    streamlit run apps/dashboard.py
                                                     → reads anomalies.parquet + memos/
                                                     → live prices via yfinance
                                                     → triggers investigate_trade() on demand
@@ -66,13 +68,13 @@ Athena view  → trade_surv.raw_trades_v                         ↓
 
 **`step1_setup_glue_athena.py`** — Idempotent setup script. Creates Glue database `trade_surv`, runs crawler `raw-trades-crawler` against `s3://trade-surveillance-bucket/raw/`, copies the crawler-managed `raw` table to the canonical `raw_trades` table, creates Athena workgroup `trade-surveillance-wg` (results → `s3://trade-surveillance-bucket/athena-results/`), and creates view `trade_surv.raw_trades_v`. Requires IAM role `AWSGlueServiceRole-trade-surv` to exist before running (creation commands are in the script's docstring).
 
-**`feature_engineering.py`** — Downloads all 30,424+ NDJSON files from `raw/` using 32 parallel threads, engineers 12 features, and writes `features/features.parquet` (Snappy-compressed) using a write-to-temp-key + `copy_object` pattern for safe overwrites.
+**`trade_surveillance/pipelines/feature_engineering.py`** — Downloads all 30,424+ NDJSON files from `raw/` using 32 parallel threads, engineers 12 features, and writes `features/features.parquet` (Snappy-compressed) using a write-to-temp-key + `copy_object` pattern for safe overwrites.
 
-**`anomaly_model.py`** — Reads `features/features.parquet`, injects 50 labelled synthetic anomalies for recall validation, trains `IsolationForest(n_estimators=200, contamination=0.08, random_state=42)` on the full frame, scores every trade, runs SHAP TreeExplainer on flagged trades only, classifies anomaly type by rule, validates synthetic recall (target ≥ 80%), removes synthetics, and writes three artefacts to S3. Achieved: 88% synthetic recall, ~12,100 anomalies flagged (8% of 152,010 trades).
+**`trade_surveillance/pipelines/anomaly_model.py`** — Reads `features/features.parquet`, injects 50 labelled synthetic anomalies for recall validation, trains `IsolationForest(n_estimators=200, contamination=0.08, random_state=42)` on the full frame, scores every trade, runs SHAP TreeExplainer on flagged trades only, classifies anomaly type by rule, validates synthetic recall (target ≥ 80%), removes synthetics, and writes three artefacts to S3. Achieved: 88% synthetic recall, ~12,100 anomalies flagged (8% of 152,010 trades).
 
-**`agents/`** — Phase 3 LangGraph orchestrator. Entry point: `from agents import investigate_trade`. Requires `ANTHROPIC_API_KEY` in `.env` in addition to `AWS_PROFILE`.
+**`trade_surveillance/agents/`** — Phase 3 LangGraph orchestrator. Entry point: `from trade_surveillance import investigate_trade`. Requires `ANTHROPIC_API_KEY` in `.env` in addition to `AWS_PROFILE`.
 
-**`dashboard.py`** — Phase 4 Streamlit UI. Single-file, ~650 lines. Reads `processed/anomalies.parquet` and `memos/` from S3 on startup (cached via `@st.cache_data`), fetches live prices from yfinance, and calls `investigate_trade()` on demand from Tab 2. Session 1 shipped Tab 1 (Overview) fully; Tabs 2–4 are stubs pending future sessions.
+**`apps/dashboard.py`** — Phase 4 Streamlit UI. Reads anomalies and memos from S3 on startup (cached via `@st.cache_data`), fetches live prices from yfinance, and calls `investigate_trade()` on demand from Tab 2. Session 1 shipped Tab 1 (Overview) fully; Tabs 2–4 are stubs pending future sessions.
 
 ## AWS Resources
 
@@ -93,11 +95,11 @@ Athena view  → trade_surv.raw_trades_v                         ↓
 | S3 key | Written by | Content |
 |---|---|---|
 | `raw/YYYY/MM/DD/*.json` | `lambda_producer.py` | NDJSON trade records |
-| `features/features.parquet` | `feature_engineering.py` | 152,010 rows × 32 cols, Snappy |
-| `processed/anomalies.parquet` | `anomaly_model.py` | 152,010 rows × 40 cols, Snappy |
-| `model/isolation_forest.pkl` | `anomaly_model.py` | Trained IsolationForest (~2.4 MB) |
-| `model/medians.json` | `anomaly_model.py` | Per-feature medians for inference |
-| `memos/{trade_id}.json` | `agents/orchestrator.py` | Structured compliance memo JSON |
+| `features/features.parquet` | `trade_surveillance.pipelines.feature_engineering` | 152,010 rows × 32 cols, Snappy |
+| `processed/anomalies.parquet` | `trade_surveillance.pipelines.anomaly_model` | 152,010 rows × 40 cols, Snappy |
+| `model/isolation_forest.pkl` | `trade_surveillance.pipelines.anomaly_model` | Trained IsolationForest (~2.4 MB) |
+| `model/medians.json` | `trade_surveillance.pipelines.anomaly_model` | Per-feature medians for inference |
+| `memos/{trade_id}.json` | `trade_surveillance.agents.orchestrator` | Structured compliance memo JSON |
 | `athena-results/` | Athena | Query result CSVs |
 
 ## Raw Data Schema
@@ -110,7 +112,7 @@ Athena view  → trade_surv.raw_trades_v                         ↓
 
 ## Feature Engineering Details
 
-12 features added by `feature_engineering.py` (all float64 unless noted):
+12 features added by `trade_surveillance.pipelines.feature_engineering` (all float64 unless noted):
 
 | Feature | Grouping |
 |---|---|
@@ -126,7 +128,7 @@ Output schema: 18 original columns + `date` + 12 features = 32 columns.
 
 ## Anomaly Model Details
 
-`anomaly_model.py` adds 8 columns to produce the 40-column `anomalies.parquet`:
+`trade_surveillance.pipelines.anomaly_model` adds 8 columns to produce the 40-column `anomalies.parquet`:
 
 | Column | dtype | Notes |
 |---|---|---|
@@ -155,7 +157,7 @@ To score new trades against the saved model: load `model/medians.json` for NaN-f
 
 ## Agent Orchestrator Details (Phase 3)
 
-`agents/` contains a 4-node LangGraph StateGraph (`agents/orchestrator.py`). Call via `investigate_trade(trade_id, auto_approve=False)`.
+`trade_surveillance/agents/` contains a 4-node LangGraph StateGraph (`orchestrator.py`). Call via `investigate_trade(trade_id, auto_approve=False)`.
 
 ### Graph nodes
 
@@ -212,7 +214,7 @@ To score new trades against the saved model: load `model/medians.json` for NaN-f
 
 ## Dashboard Details (Phase 4)
 
-`dashboard.py` is a single-file Streamlit app. `st.set_page_config()` must always be the **first** Streamlit call in `main()`.
+`apps/dashboard.py` is the Streamlit app entrypoint. `st.set_page_config()` must always be the **first** Streamlit call in `main()`.
 
 ### S3 reads
 
