@@ -5,14 +5,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
-COPY pyproject.toml /app/pyproject.toml
-COPY README.md /app/README.md
+COPY pyproject.toml README.md /app/
 COPY trade_surveillance /app/trade_surveillance
 COPY migrations.py /app/migrations.py
 COPY mock_data_script.py /app/mock_data_script.py
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 

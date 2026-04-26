@@ -1,2 +1,0 @@
-# Install the package in editable mode (pulls deps from pyproject.toml).
--e .

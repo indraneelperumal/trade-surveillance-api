@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
@@ -9,23 +7,8 @@ from trade_surveillance.config import get_settings
 from trade_surveillance.models import create_tables
 
 
-def _normalize_db_url(db_url: str) -> str:
-    """
-    Force SQLAlchemy to use psycopg (v3) driver.
-    Accepts existing SQLAlchemy URLs and upgrades plain postgresql:// URLs.
-    """
-    normalized = db_url
-    if normalized.startswith("postgresql://"):
-        normalized = normalized.replace("postgresql://", "postgresql+psycopg://", 1)
-    elif normalized.startswith("postgres://"):
-        normalized = normalized.replace("postgres://", "postgresql+psycopg://", 1)
-
-    # psycopg/libpq doesn't accept "pgbouncer" as a connection option.
-    # Remove it if present so Supabase pooler URLs work unchanged.
-    parts = urlsplit(normalized)
-    query_pairs = [(k, v) for (k, v) in parse_qsl(parts.query, keep_blank_values=True) if k != "pgbouncer"]
-    clean_query = urlencode(query_pairs)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, clean_query, parts.fragment))
+def create_engine_from_url(db_url: str) -> Engine:
+    return create_engine(db_url, future=True)
 
 
 def get_engine() -> Engine:
@@ -33,7 +16,7 @@ def get_engine() -> Engine:
     db_url = settings.database_url
     if not db_url:
         raise ValueError("Set DATABASE_URL in your environment.")
-    return create_engine(_normalize_db_url(db_url), future=True)
+    return create_engine_from_url(db_url)
 
 
 def add_column(conn: Connection, table_name: str, column_sql: str) -> None:

@@ -11,13 +11,16 @@ The Streamlit dashboard is intentionally removed from this repo so the UI can li
 
 ## Setup
 
+Dependencies are declared in **`pyproject.toml`** (setuptools / PEP 621 — this repo does not use Poetry).
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-pip install -e ".[dev]"     # optional: pytest + ruff
+pip install -e ".[dev,all]"   # full repo (API + pipelines + agents + pytest/ruff)
 cp .env.example .env
 ```
+
+Optional extras in `pyproject.toml`: **`pipelines`**, **`agents`**, **`all`**, **`dev`**. For a minimal API-only venv use `pip install -e ".[dev]"` (no pandas/S3/agents). Docker images use `pip install .` (API only).
 
 ## Current Backend Scope
 
@@ -32,6 +35,7 @@ cp .env.example .env
 
 ```bash
 uvicorn trade_surveillance.api.main:app --reload --port 8000
+# Pipelines require: pip install -e ".[pipelines]" or ".[all]"
 python -m trade_surveillance.pipelines.feature_engineering
 python -m trade_surveillance.pipelines.anomaly_model
 python migrations.py create_tables
@@ -52,7 +56,7 @@ docker compose up backend
 
 On startup, the API runs table creation + migrations automatically (controlled by `AUTO_MIGRATE_ON_STARTUP`, default `true`).
 
-Programmatic investigation:
+Programmatic investigation (requires `pip install -e ".[agents]"` or `.[all]`):
 
 ```python
 from trade_surveillance import investigate_trade

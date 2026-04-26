@@ -12,13 +12,9 @@ from dotenv import load_dotenv
 @dataclass(frozen=True)
 class Settings:
     app_env: str
-    api_port: int
     allowed_origins: str
     auto_migrate_on_startup: bool
     database_url: str
-    supabase_url: str
-    supabase_anon_key: str
-    supabase_service_role_key: str
     s3_bucket: str
     raw_prefix: str
     features_key: str
@@ -33,13 +29,6 @@ def _env_str(name: str, default: str) -> str:
     return default if val is None or val == "" else val
 
 
-def _env_int(name: str, default: int) -> int:
-    val = os.environ.get(name)
-    if val is None or val == "":
-        return default
-    return int(val)
-
-
 def _env_bool(name: str, default: bool) -> bool:
     val = os.environ.get(name)
     if val is None or val == "":
@@ -52,13 +41,9 @@ def get_settings() -> Settings:
     load_dotenv()
     return Settings(
         app_env=_env_str("APP_ENV", "development"),
-        api_port=_env_int("API_PORT", 8000),
         allowed_origins=_env_str("ALLOWED_ORIGINS", "http://localhost:3000"),
         auto_migrate_on_startup=_env_bool("AUTO_MIGRATE_ON_STARTUP", True),
         database_url=_env_str("DATABASE_URL", ""),
-        supabase_url=_env_str("SUPABASE_URL", ""),
-        supabase_anon_key=_env_str("SUPABASE_ANON_KEY", ""),
-        supabase_service_role_key=_env_str("SUPABASE_SERVICE_ROLE_KEY", ""),
         s3_bucket=_env_str("TSP_S3_BUCKET", "trade-surveillance-bucket"),
         raw_prefix=_env_str("TSP_RAW_PREFIX", "raw/"),
         features_key=_env_str("TSP_FEATURES_KEY", "features/features.parquet"),

@@ -27,10 +27,9 @@ import random
 import logging
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from sqlalchemy import text
 
-import boto3
-from sqlalchemy import create_engine, text
+from trade_surveillance.db.migrator import create_engine_from_url
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
 N_TRADES      = int(os.environ.get("NUM_TRADES", "200000"))
@@ -45,7 +44,6 @@ MKT_OPEN  = (13, 30)   # UTC — NYSE 09:30 ET
 MKT_CLOSE = (20, 0)    # UTC — NYSE 16:00 ET
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-kinesis = boto3.client("kinesis") if OUTPUT_TARGET == "kinesis" else None
 
 
 # ─── INSTRUMENT UNIVERSE ──────────────────────────────────────────────────────
@@ -513,17 +511,6 @@ def gen_trade() -> dict:
     }
 
 
-def _normalize_db_url(db_url: str) -> str:
-    if db_url.startswith("postgresql://"):
-        db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
-    elif db_url.startswith("postgres://"):
-        db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
-    parts = urlsplit(db_url)
-    query_pairs = [(k, v) for (k, v) in parse_qsl(parts.query, keep_blank_values=True) if k != "pgbouncer"]
-    clean_query = urlencode(query_pairs)
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, clean_query, parts.fragment))
-
-
 def _seed_reference_tables(conn) -> None:
     instrument_rows = []
     for symbol, inst in INSTRUMENTS.items():
@@ -669,7 +656,7 @@ def lambda_handler(event, context):
     if OUTPUT_TARGET == "database":
         if not DATABASE_URL:
             raise ValueError("DATABASE_URL is required when OUTPUT_TARGET=database")
-        engine = create_engine(_normalize_db_url(DATABASE_URL), future=True)
+        engine = create_engine_from_url(DATABASE_URL)
         written = 0
         with engine.begin() as conn:
             _seed_reference_tables(conn)
@@ -691,6 +678,10 @@ def lambda_handler(event, context):
         raise ValueError("OUTPUT_TARGET must be either 'database' or 'kinesis'")
     if not STREAM_NAME:
         raise ValueError("STREAM_NAME is required when OUTPUT_TARGET=kinesis")
+
+    import boto3
+
+    kinesis = boto3.client("kinesis")
 
     records = []
     for _ in range(N_TRADES):

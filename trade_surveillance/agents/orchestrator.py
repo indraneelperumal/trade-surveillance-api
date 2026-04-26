@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
-from typing_extensions import TypedDict
+from typing import TypedDict
 
 from trade_surveillance.agents.prompts import SYSTEM_PROMPT, build_user_prompt
 from trade_surveillance.agents.tools import (

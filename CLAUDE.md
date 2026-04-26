@@ -5,16 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install package + dependencies (editable install from pyproject.toml)
-pip install -r requirements.txt
+# API + dev tools (default). Add pipelines/agents or use [all] for ML + orchestrator.
+pip install -e ".[dev,all]"
 
-# Run feature engineering pipeline (reads S3, writes features.parquet)
+# Run feature engineering pipeline (reads S3, writes features.parquet) — needs .[pipelines] or .[all]
 python -m trade_surveillance.pipelines.feature_engineering
 
 # Run anomaly detection (reads features.parquet, writes anomalies.parquet + model artefacts)
 python -m trade_surveillance.pipelines.anomaly_model
 
-# Investigate a single flagged trade (Phase 3 — LangGraph orchestrator)
+# Investigate a single flagged trade (Phase 3 — LangGraph orchestrator) — needs .[agents] or .[all]
 python -c "
 from trade_surveillance import investigate_trade
 result = investigate_trade('TRADE_ID_HERE', auto_approve=True)
