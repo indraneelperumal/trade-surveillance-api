@@ -1,17 +1,16 @@
-FROM python:3.11-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Trade Surveillance API — production-style image (Render, Fly, etc.)
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-COPY pyproject.toml README.md /app/
-COPY trade_surveillance /app/trade_surveillance
-COPY migrations.py /app/migrations.py
-COPY mock_data_script.py /app/mock_data_script.py
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
-RUN pip install --no-cache-dir .
+COPY pyproject.toml README.md ./
+COPY trade_surveillance ./trade_surveillance
+
+RUN pip install --upgrade pip && pip install .
 
 EXPOSE 8000
-
-CMD ["uvicorn", "trade_surveillance.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "exec uvicorn trade_surveillance.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

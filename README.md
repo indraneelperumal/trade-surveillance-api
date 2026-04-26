@@ -38,23 +38,27 @@ uvicorn trade_surveillance.api.main:app --reload --port 8000
 # Pipelines require: pip install -e ".[pipelines]" or ".[all]"
 python -m trade_surveillance.pipelines.feature_engineering
 python -m trade_surveillance.pipelines.anomaly_model
-python migrations.py create_tables
-python migrations.py            # defaults to migrate: create_tables + migrations
-python migrations.py migrate    # same as above
-python migrations.py all        # alias for migrate
 ```
 
-`migrate` always runs `create_tables()` from `trade_surveillance/models` first, then applies migration functions from `migrations.py`.
+On API startup, `AUTO_MIGRATE_ON_STARTUP` (default `true`) runs `create_tables_and_migrate()` — see [`trade_surveillance/db/migrator.py`](trade_surveillance/db/migrator.py).
 
-## Docker
+## Deploy (Phase 0) — Render + Vercel
+
+1. **Supabase:** Create a project; copy **Session pooler** `DATABASE_URL` (see comments in [`.env.example`](.env.example)).
+2. **This API on Render:** New **Web Service** → connect this repo → **Docker** using the repo-root [`Dockerfile`](Dockerfile) (or Native: build `pip install .`, start `uvicorn trade_surveillance.api.main:app --host 0.0.0.0 --port $PORT`). Optional: deploy from [`render.yaml`](render.yaml) as a [Render Blueprint](https://render.com/docs/blueprint-spec). Copy-paste backups of the same snippets live in [docs/phase-0-deploy-artifacts.md](docs/phase-0-deploy-artifacts.md).
+3. **Environment variables on Render:** Set at least `DATABASE_URL`, `ALLOWED_ORIGINS` (include your Vercel production URL and `http://localhost:3000` for local UI). Optional: `ANTHROPIC_API_KEY`, `SUPABASE_*` for Storage (later phases).
+4. **Health check:** Render should use path **`/health`** (root health endpoint).
+5. **Frontend on Vercel:** In the Next.js repo, set `NEXT_PUBLIC_API_BASE_URL` to your Render service URL (no trailing slash). Ensure `ALLOWED_ORIGINS` on the API includes that Vercel origin so the browser is not blocked by CORS.
+
+**Docker (optional local):** From repo root, after adding `Dockerfile` and `.dockerignore` (see [docs/phase-0-deploy-artifacts.md](docs/phase-0-deploy-artifacts.md)):
 
 ```bash
 cp .env.example .env
-docker compose build
-docker compose up backend
+docker build -t trade-surveillance-api .
+docker run --rm -p 8000:8000 --env-file .env trade-surveillance-api
 ```
 
-On startup, the API runs table creation + migrations automatically (controlled by `AUTO_MIGRATE_ON_STARTUP`, default `true`).
+**Worker (later):** Phase 5 adds `python -m trade_surveillance.worker score-batch`. Until then, skip a second Render service (see commented worker block in the Blueprint snippet in [docs/phase-0-deploy-artifacts.md](docs/phase-0-deploy-artifacts.md)).
 
 Programmatic investigation (requires `pip install -e ".[agents]"` or `.[all]`):
 

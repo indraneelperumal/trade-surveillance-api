@@ -1,0 +1,29 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: trade-surveillance-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: AUTO_MIGRATE_ON_STARTUP
+        value: "true"
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+        optional: true
+      - key: SUPABASE_URL
+        sync: false
+        optional: true
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+        optional: true
+      - key: SUPABASE_STORAGE_BUCKET
+        sync: false
+        optional: true
