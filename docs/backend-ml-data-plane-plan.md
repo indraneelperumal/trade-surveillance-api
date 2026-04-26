@@ -59,7 +59,7 @@ isProject: false
 | Supabase RLS | **Out of scope** for this project; single trusted API/database role is acceptable. |
 | Environments | **Single Supabase project / one `DATABASE_URL`** for **local** and **hosted demo** (same schema; optional different seed datasets). |
 | Memos & media | **Hybrid:** keep **query-friendly** fields in Postgres (summary, verdict, key structured bits, Storage **path** when applicable); put **large blobs** (full memo JSON, exports, future media) in **Supabase Storage**. |
-| **Locked defaults (Q&A)** | **Seed ~100–200k trades.** **Live simulator:** ~50–100 new rows per **1–5 minutes** (medium). **Scoring:** target **≤ ~5 minutes** lag → align Render Cron / worker tick with **5-minute** cadence (or 1 min Cron if you tighten later). **Write path:** **default = Python scripts** (`seed_demo`, `simulate_live`) using `DATABASE_URL` for simplicity; **FastAPI `POST /trades` remains supported** for manual/UI-driven inserts — scoring uses **timestamp watermark** only. |
+| **Locked defaults (Q&A)** | **Seed ~100–200k trades** via `mock_data_script.py`. **Live:** `live_simulate.py` ~50–100 rows per **1–5 minutes**. **Scoring:** **≤ ~5 minutes** lag → Render Cron ~5 min. **Write path:** bulk/live CLIs + optional **`POST /trades`**; scoring uses **timestamp watermark** only. |
 
 ### Glossary (what “volume / write path / scoring SLA” meant in the plan)
 
@@ -164,8 +164,8 @@ flowchart TB
 | # | Task | Detail |
 |---|------|--------|
 | 2.1 | Seed order | Insert FK parents first: `instruments`, `traders`, `clients`, `counterparties` (if used), then **bulk `trades`** with varied `symbol`, `volume`, `price`, `is_off_hours`, `is_otc`, `relative_spread`, `bid_size`/`ask_size` where applicable. |
-| 2.2 | Seed script | e.g. `python -m trade_surveillance.scripts.seed_demo --rows 150000` (default per locked throughput) or Click CLI under `trade_surveillance/scripts/seed_demo.py`. Use **batched** inserts for speed. |
-| 2.3 | Live simulator | Default ~**50–100** trades per **1–5 minutes** (e.g. `--interval-sec 180 --batch-size 75`); inserts use **current** `timestamp`; implement as CLI + document Render Cron. |
+| 2.2 | Bulk seed | One-time: [`mock_data_script.py`](../mock_data_script.py) with `OUTPUT_TARGET=database` (env `NUM_TRADES`, `DB_BATCH_SIZE`). |
+| 2.3 | Live simulator | [`live_simulate.py`](../live_simulate.py) — reuses `gen_trade`; default ~**75** trades per tick, **1–5 min** Cron; optional `--interval-sec` loop. |
 | 2.4 | README | “Repro demo”: seed command, optional simulator, expected row counts, reminder to run **train** (Phase 3) then **score** (Phase 4). |
 
 **Exit criteria:** After seed, `SELECT count(*) FROM trades` matches target; simulator adds rows visible on next worker poll.

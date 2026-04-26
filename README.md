@@ -42,6 +42,34 @@ python -m trade_surveillance.pipelines.anomaly_model
 
 On API startup, `AUTO_MIGRATE_ON_STARTUP` (default `true`) runs `create_tables_and_migrate()` — see [`trade_surveillance/db/migrator.py`](trade_surveillance/db/migrator.py).
 
+## Demo data (Phase 2) — `mock_data_script.py` + `live_simulate.py`
+
+Both use **`DATABASE_URL`** (same as the API). Reference + dimension seeding lives in **[`mock_data_script.py`](mock_data_script.py)** (enterprise-style synthetic trades, anomaly shaping, GBM prices).
+
+**One-time backfill (default ~200k rows, batched):**
+
+```bash
+cd trade-surveillance-api && source .venv/bin/activate
+cp .env.example .env   # ensure DATABASE_URL is set
+OUTPUT_TARGET=database python mock_data_script.py
+# Optional env: NUM_TRADES, DB_BATCH_SIZE, ANOMALY_RATE, EXT_HOURS_PCT, OTC_PCT
+```
+
+**Live simulator** (same row generator + `INSERT`; timestamps clustered near **now** for streaming demos):
+
+```bash
+python live_simulate.py --batch-size 75
+python live_simulate.py --batch-size 75 --interval-sec 180   # loop every 3 minutes
+```
+
+**Render Cron:** e.g. every 5 minutes, from repo root with venv / `pip install -e .` and `DATABASE_URL`:
+
+`python live_simulate.py --batch-size 75`
+
+You do **not** need a second seed script — use **`mock_data_script.py`** only for bulk load; **`live_simulate.py`** for ongoing ticks.
+
+**Next after seed:** Phase 3–4 (train + score workers) will consume these rows.
+
 ## Deploy (Phase 0) — Render + Vercel
 
 1. **Supabase:** Create a project; copy a **pooler** `DATABASE_URL` — Session mode (5432) or Transaction mode (6543); the app configures psycopg for 6543 automatically (see [`.env.example`](.env.example)).

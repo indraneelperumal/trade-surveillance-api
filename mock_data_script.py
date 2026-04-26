@@ -29,6 +29,13 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy import text
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 from trade_surveillance.db.migrator import create_engine_from_url
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────────
@@ -37,7 +44,7 @@ EXT_HOURS_PCT = float(os.environ.get("EXT_HOURS_PCT", "0.10"))
 OTC_PCT       = float(os.environ.get("OTC_PCT", "0.15"))
 OUTPUT_TARGET = os.environ.get("OUTPUT_TARGET", "database").strip().lower()
 STREAM_NAME   = os.environ.get("STREAM_NAME", "")
-DATABASE_URL  = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 DB_BATCH_SIZE = int(os.environ.get("DB_BATCH_SIZE", "5000"))
 
 MKT_OPEN  = (13, 30)   # UTC — NYSE 09:30 ET
@@ -327,7 +334,15 @@ def simulate_bid_ask_sizes(volume: int, spoof_bias: float = 0.0) -> tuple:
     return bid_s, ask_s
 
 
-def gen_trade() -> dict:
+def gen_trade(*, timestamp_override: datetime | None = None) -> dict:
+    """
+    Generate one synthetic trade row (dict matching ``_TRADES_INSERT_SQL``).
+
+    ``timestamp_override``: when set (e.g. live simulator), use this instant for
+    ``timestamp`` / ``trade_date`` / ``is_off_hours`` instead of ``pick_timestamp``.
+    Anomaly-driven *forced* off-hours timestamps are skipped in that mode so rows
+    stay clustered near "now" for streaming demos.
+    """
     # ── Participants ──────────────────────────────────────────────────────────
     trader_id = random.choice(TRADER_IDS)
     client_id = random.choice(CLIENT_IDS)
@@ -347,8 +362,12 @@ def gen_trade() -> dict:
     force_off_hours = anomaly_type in {"off_hours", "multi_flag"}
 
     # ── Timing ────────────────────────────────────────────────────────────────
-    ts          = pick_forced_offhours_timestamp() if force_off_hours else pick_timestamp(trader)
-    off_hours   = _is_off_hours(ts)
+    if timestamp_override is not None:
+        ts = timestamp_override
+        off_hours = _is_off_hours(ts)
+    else:
+        ts = pick_forced_offhours_timestamp() if force_off_hours else pick_timestamp(trader)
+        off_hours = _is_off_hours(ts)
     settle_days = 1 if inst["asset_class"] == "ETF" else 2
     settle_date = (ts + timedelta(days=settle_days)).strftime("%Y-%m-%d")
 
@@ -699,3 +718,9 @@ def lambda_handler(event, context):
 
     logging.info(f"Published {N_TRADES - failed} trades to {STREAM_NAME}")
     return {"status": "ok", "published": N_TRADES - failed}
+
+
+if __name__ == "__main__":
+    """One-shot DB seed without Lambda (same as ``OUTPUT_TARGET=database``)."""
+    logging.info("mock_data_script: running lambda_handler locally")
+    print(lambda_handler({}, None))
