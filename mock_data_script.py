@@ -669,7 +669,11 @@ def lambda_handler(event, context):
     if OUTPUT_TARGET == "database":
         if not DATABASE_URL:
             raise ValueError("DATABASE_URL is required when OUTPUT_TARGET=database")
-        engine = create_engine(_normalize_db_url(DATABASE_URL), future=True)
+        engine = create_engine(
+            _normalize_db_url(DATABASE_URL),
+            connect_args={"prepare_threshold": None},
+            future=True,
+        )
         written = 0
         with engine.begin() as conn:
             _seed_reference_tables(conn)
