@@ -80,7 +80,7 @@ trade_surveillance.agents.orchestrator           → Claude Haiku compliance mem
 ## Environment Variables
 
 Required:
-- `DATABASE_URL` — PostgreSQL connection string (e.g. `postgresql+psycopg://user:pass@host/db`)
+- `DATABASE_URL` — PostgreSQL connection string (e.g. `postgresql+psycopg://user:pass@host/db`). Supabase **Transaction** pooler (`:6543`) is supported: `create_engine_from_url` sets psycopg `prepare_threshold=None` when the URL port is 6543.
 
 Optional:
 - `APP_ENV` — `development` (default) or `production`

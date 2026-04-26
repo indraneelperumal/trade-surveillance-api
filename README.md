@@ -44,7 +44,7 @@ On API startup, `AUTO_MIGRATE_ON_STARTUP` (default `true`) runs `create_tables_a
 
 ## Deploy (Phase 0) — Render + Vercel
 
-1. **Supabase:** Create a project; copy **Session pooler** `DATABASE_URL` (see comments in [`.env.example`](.env.example)).
+1. **Supabase:** Create a project; copy a **pooler** `DATABASE_URL` — Session mode (5432) or Transaction mode (6543); the app configures psycopg for 6543 automatically (see [`.env.example`](.env.example)).
 2. **This API on Render:** New **Web Service** → connect this repo → **Docker** using the repo-root [`Dockerfile`](Dockerfile) (or Native: build `pip install .`, start `uvicorn trade_surveillance.api.main:app --host 0.0.0.0 --port $PORT`). Optional: deploy from [`render.yaml`](render.yaml) as a [Render Blueprint](https://render.com/docs/blueprint-spec). Copy-paste backups of the same snippets live in [docs/phase-0-deploy-artifacts.md](docs/phase-0-deploy-artifacts.md).
 3. **Environment variables on Render:** Set at least `DATABASE_URL`, `ALLOWED_ORIGINS` (include your Vercel production URL and `http://localhost:3000` for local UI). Optional: `ANTHROPIC_API_KEY`, `SUPABASE_*` for Storage (later phases).
 4. **Health check:** Render should use path **`/health`** (root health endpoint).

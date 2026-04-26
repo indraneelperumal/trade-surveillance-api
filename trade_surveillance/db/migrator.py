@@ -1,14 +1,28 @@
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
 from trade_surveillance.config import get_settings
 from trade_surveillance.models import create_tables
 
+# Supabase / PgBouncer "Transaction" pooler (port 6543) cannot reuse server-side
+# prepared statements across clients; psycopg must not prepare.
+_TRANSACTION_POOLER_PORT = 6543
+
+
+def _connect_args_for_url(db_url: str) -> dict:
+    parsed = urlparse(db_url)
+    if parsed.port == _TRANSACTION_POOLER_PORT:
+        return {"prepare_threshold": None}
+    return {}
+
 
 def create_engine_from_url(db_url: str) -> Engine:
-    return create_engine(db_url, future=True)
+    connect_args = _connect_args_for_url(db_url)
+    return create_engine(db_url, future=True, connect_args=connect_args)
 
 
 def get_engine() -> Engine:
