@@ -5,8 +5,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# API + dev tools (default). Add pipelines/agents or use [all] for ML + orchestrator.
+# Install API + dev tools (default)
+pip install -e ".[dev]"
+
+# Install with ML pipelines
+pip install -e ".[dev,pipelines]"
+
+# Install everything (API + pipelines + agents)
 pip install -e ".[dev,all]"
+
+# Run the API locally
+uvicorn trade_surveillance.api.main:app --reload --port 8000
+
+# Run with Docker
+docker compose up --build
+
+# Run database migrations manually
+python migrations.py migrate
+
+# Seed the database with synthetic trades (default: 200k trades, database mode)
+python mock_data_script.py
+# Or with env overrides:
+NUM_TRADES=5000 OUTPUT_TARGET=database python mock_data_script.py
 
 # Run feature engineering pipeline (reads S3, writes features.parquet) — needs .[pipelines] or .[all]
 python -m trade_surveillance.pipelines.feature_engineering
@@ -21,116 +41,171 @@ result = investigate_trade('TRADE_ID_HERE', auto_approve=True)
 print(result['verdict'], result['compliance_memo'])
 "
 
-# Set up Glue catalog + Athena view (idempotent, run once per environment)
-python step1_setup_glue_athena.py
+# Lint
+ruff check .
 ```
 
-AWS credentials are resolved via `AWS_PROFILE` in `.env`. The `.env` file must be present; the feature pipeline raises `ValueError` immediately if `AWS_PROFILE` is missing.
+## Architecture Overview
 
-Optional S3 layout overrides (defaults match the demo bucket): `TSP_S3_BUCKET`, `TSP_RAW_PREFIX`, `TSP_FEATURES_KEY`, `TSP_ANOMALIES_KEY`, `TSP_MODEL_KEY`, `TSP_MEDIANS_KEY`, `TSP_MEMOS_PREFIX`. See `.env.example`.
-
-## Pipeline Architecture
-
-Data flows through three stages:
+This is a **FastAPI + PostgreSQL backend** (primary) with an optional ML pipeline layer (secondary, batch).
 
 ```
-lambda_function.py          lambda_producer.py
-(Kinesis producer)    →     (Kinesis → S3)         →   S3: raw/YYYY/MM/DD/*.json
-  ↓ env: STREAM_NAME          ↓ env: BUCKET_NAME
+mock_data_script.py
+(Synthetic trade generator)
+  ↓ OUTPUT_TARGET=database
+PostgreSQL (Supabase)
+  trades, alerts, investigations,
+  investigation_notes, model_runs, users,
+  traders, clients, counterparties, instruments
+  ↓
+FastAPI REST API  (trade_surveillance/api/)
+  /api/v1/trades
+  /api/v1/alerts
+  /api/v1/investigations
+  /api/v1/investigation-notes
+  /api/v1/model-runs
+  /api/v1/users
+  /api/v1/metrics/overview
+  ↓
+Next.js frontend (separate repo: surveillance-web)
 
-step1_setup_glue_athena.py                          trade_surveillance.pipelines.feature_engineering
-Glue crawler → trade_surv.raw_trades       →        S3: features/features.parquet
-Athena view  → trade_surv.raw_trades_v                         ↓
-                                                    trade_surveillance.pipelines.anomaly_model
-                                                    S3: processed/anomalies.parquet
-                                                    S3: model/isolation_forest.pkl
-                                                    S3: model/medians.json
-                                                               ↓
-                                                    trade_surveillance.agents.orchestrator (Phase 3)
-                                                    investigate_trade(trade_id)
-                                                    → 4-node LangGraph StateGraph
-                                                    → Claude Haiku compliance memo
-                                                    S3: memos/{trade_id}.json
+─── Optional ML batch pipeline (runs independently) ────────────────────
+mock_data_script.py (OUTPUT_TARGET=kinesis) → Kinesis → S3: raw/YYYY/MM/DD/*.json
+step1_setup_glue_athena.py                  → Glue/Athena query layer
+trade_surveillance.pipelines.feature_engineering → S3: features/features.parquet
+trade_surveillance.pipelines.anomaly_model       → S3: processed/anomalies.parquet
+trade_surveillance.agents.orchestrator           → Claude Haiku compliance memo
 ```
 
-**`lambda_function.py`** — Generates synthetic trades for 7 symbols (AAPL, MSFT, TSLA, AMZN, NVDA, GOOGL, META) with price random-walks, heavy-tailed volumes, and configurable off-hours/OTC ratios. Publishes N_TRADES records per invocation to the Kinesis stream named by `STREAM_NAME`. Key env vars: `STREAM_NAME`, `NUM_TRADES` (default 5), `EXT_HOURS_PCT` (default 0.10), `OTC_PCT` (default 0.15).
+## Environment Variables
 
-**`lambda_producer.py`** — Kinesis-triggered; decodes base64 records and writes newline-delimited JSON to S3 at `raw/{YYYY}/{MM}/{DD}/{HHMMSS-microseconds}.json`. Env vars: `BUCKET_NAME`, `RAW_PREFIX` (default `raw/`).
+Required:
+- `DATABASE_URL` — PostgreSQL connection string (e.g. `postgresql+psycopg://user:pass@host/db`)
 
-**`step1_setup_glue_athena.py`** — Idempotent setup script. Creates Glue database `trade_surv`, runs crawler `raw-trades-crawler` against `s3://trade-surveillance-bucket/raw/`, copies the crawler-managed `raw` table to the canonical `raw_trades` table, creates Athena workgroup `trade-surveillance-wg` (results → `s3://trade-surveillance-bucket/athena-results/`), and creates view `trade_surv.raw_trades_v`. Requires IAM role `AWSGlueServiceRole-trade-surv` to exist before running (creation commands are in the script's docstring).
+Optional:
+- `APP_ENV` — `development` (default) or `production`
+- `ALLOWED_ORIGINS` — comma-separated CORS origins (default: `http://localhost:3000`)
+- `AUTO_MIGRATE_ON_STARTUP` — `true` (default) runs `create_tables_and_migrate()` on startup
+- `AWS_PROFILE` — required for ML pipeline and agent jobs only
+- `ANTHROPIC_API_KEY` — required for the LangGraph agent orchestrator only
+- `TSP_S3_BUCKET`, `TSP_RAW_PREFIX`, `TSP_FEATURES_KEY`, `TSP_ANOMALIES_KEY`, `TSP_MODEL_KEY`, `TSP_MEDIANS_KEY`, `TSP_MEMOS_PREFIX` — S3 layout overrides (ML pipeline only)
 
-**`trade_surveillance/pipelines/feature_engineering.py`** — Downloads all 30,424+ NDJSON files from `raw/` using 32 parallel threads, engineers 12 features, and writes `features/features.parquet` (Snappy-compressed) using a write-to-temp-key + `copy_object` pattern for safe overwrites.
+Mock data script env vars:
+- `NUM_TRADES` — number of trades to generate (default: 200000)
+- `OUTPUT_TARGET` — `database` (default) or `kinesis`
+- `DB_BATCH_SIZE` — insert batch size (default: 5000)
+- `EXT_HOURS_PCT` — fraction of off-hours trades (default: 0.10)
+- `OTC_PCT` — fraction of OTC trades (default: 0.15)
+- `ANOMALY_RATE` — overall anomaly injection rate (default: 0.12)
 
-**`trade_surveillance/pipelines/anomaly_model.py`** — Reads `features/features.parquet`, injects 50 labelled synthetic anomalies for recall validation, trains `IsolationForest(n_estimators=200, contamination=0.08, random_state=42)` on the full frame, scores every trade, runs SHAP TreeExplainer on flagged trades only, classifies anomaly type by rule, validates synthetic recall (target ≥ 80%), removes synthetics, and writes three artefacts to S3. Achieved: 88% synthetic recall, ~12,100 anomalies flagged (8% of 152,010 trades).
+## REST API
 
-**`trade_surveillance/agents/`** — Phase 3 LangGraph orchestrator. Entry point: `from trade_surveillance import investigate_trade`. Requires `ANTHROPIC_API_KEY` in `.env` in addition to `AWS_PROFILE`.
+Base path: `/api/v1`. All list endpoints return paginated responses: `{ items, total, offset, limit }`. All errors return: `{ error: { code, message, details } }`.
 
-**Frontend note** — Streamlit UI has been removed from this repo. Build and maintain the UI in a separate Next.js repository that calls backend APIs only.
+### Routes
 
-## AWS Resources
-
-| Resource | Name |
-|---|---|
-| S3 bucket | `trade-surveillance-bucket` |
-| Region | `us-east-2` |
-| Glue database | `trade_surv` |
-| Glue crawler | `raw-trades-crawler` |
-| Glue table (canonical) | `trade_surv.raw_trades` |
-| Glue table (crawler-managed) | `trade_surv.raw` |
-| Athena view | `trade_surv.raw_trades_v` |
-| Athena workgroup | `trade-surveillance-wg` |
-| IAM account ID | `052893174124` |
-
-## S3 Artefact Map
-
-| S3 key | Written by | Content |
+| Method | Path | Description |
 |---|---|---|
-| `raw/YYYY/MM/DD/*.json` | `lambda_producer.py` | NDJSON trade records |
-| `features/features.parquet` | `trade_surveillance.pipelines.feature_engineering` | 152,010 rows × 32 cols, Snappy |
-| `processed/anomalies.parquet` | `trade_surveillance.pipelines.anomaly_model` | 152,010 rows × 40 cols, Snappy |
-| `model/isolation_forest.pkl` | `trade_surveillance.pipelines.anomaly_model` | Trained IsolationForest (~2.4 MB) |
-| `model/medians.json` | `trade_surveillance.pipelines.anomaly_model` | Per-feature medians for inference |
-| `memos/{trade_id}.json` | `trade_surveillance.agents.orchestrator` | Structured compliance memo JSON |
-| `athena-results/` | Athena | Query result CSVs |
+| GET | `/health` | Root health check |
+| GET | `/api/v1/health` | Versioned health check |
+| POST/GET | `/api/v1/trades` | Create / list trades (`?symbol=`, `?offset=`, `?limit=`) |
+| GET/PATCH/DELETE | `/api/v1/trades/{id}` | Get / update / delete trade |
+| POST/GET | `/api/v1/alerts` | Create / list alerts (`?status=`, `?severity=`, `?anomalyType=`, `?symbol=`) |
+| GET/PATCH/DELETE | `/api/v1/alerts/{id}` | Get / update / delete alert |
+| POST/GET | `/api/v1/investigations` | Create / list investigations (`?alert_id=`) |
+| GET/PATCH/DELETE | `/api/v1/investigations/{id}` | Get / update / delete investigation |
+| POST/GET | `/api/v1/investigation-notes` | Create / list notes (`?alert_id=`, `?investigation_id=`) |
+| GET/PATCH/DELETE | `/api/v1/investigation-notes/{id}` | Get / update / delete note |
+| POST/GET | `/api/v1/model-runs` | Create / list model runs |
+| GET/PATCH/DELETE | `/api/v1/model-runs/{id}` | Get / update / delete model run |
+| POST/GET | `/api/v1/users` | Create / list users |
+| GET/PATCH/DELETE | `/api/v1/users/{id}` | Get / update / delete user |
+| GET | `/api/v1/metrics/overview` | Dashboard KPI aggregates |
 
-## Raw Data Schema
+### Metrics overview response shape
 
-18 fields per record. Key details:
-- `timestamp`: ISO-8601 with UTC offset (`+00:00`) — use `from_iso8601_timestamp()` in Athena, `pd.to_datetime(..., utc=True)` in pandas
-- `side`: always `"Buy"` or `"Sell"` from the generator
-- `exchange`: `NASDAQ`, `NYSE`, `BATS`, `ARCA`, `DARK`, `ATS01`, or `OTC`
-- S3 partitioning is non-Hive (`YYYY/MM/DD/`) — Glue names the partition columns `partition_0`, `partition_1`, `partition_2`
+```json
+{
+  "total_alerts": 0,
+  "total_trades": 0,
+  "alerts_by_status": {},
+  "alerts_by_severity": {},
+  "alerts_by_anomaly_type": {},
+  "open_alerts_by_severity": {},
+  "open_high_severity_count": 0,
+  "top_symbols_by_alerts": [{ "symbol": "TSLA", "count": 0 }]
+}
+```
 
-## Feature Engineering Details
+## Database Schema
 
-12 features added by `trade_surveillance.pipelines.feature_engineering` (all float64 unless noted):
+PostgreSQL via SQLAlchemy 2.0 + Pydantic. Tables auto-created on startup when `AUTO_MIGRATE_ON_STARTUP=true`. Manual migrations live in `trade_surveillance/db/migrator.py:run_migrations()`.
+
+### Core tables
+
+**trades** — one row per trade event. Primary key: `trade_id` (UUID). FK references: `instruments.symbol`, `traders.trader_id`, `clients.client_id`, `counterparties.counterparty_id`. Contains all raw fields + pre-computed feature columns.
+
+**alerts** — one alert per flagged trade (unique on `trade_id`). Fields: `anomaly_score`, `anomaly_rank`, `anomaly_type`, `top_shap_feature`, `top_3_shap_features` (JSONB), `severity` (`HIGH|MEDIUM|LOW|NONE`), `status` (`OPEN|IN_PROGRESS|CLOSED`), `disposition`, `assigned_to`, `reviewed_by`, `reviewed_at`, `notes`.
+
+**investigations** — AI-generated or manual investigation for an alert. Fields: `verdict`, `confidence`, `rule_violated`, `summary`, `evidence_points` (JSONB), `recommended_action`, `data_gaps`, `memo_json` (JSONB), `memo_storage_key`, `is_auto`, `initiated_by`.
+
+**investigation_notes** — chronological audit trail for an alert/investigation. Linked via `alert_id` and optional `investigation_id`.
+
+**model_runs** — tracks batch pipeline executions (status, metrics, artefact paths, run parameters).
+
+**users** — app-level user records. `role`: `ANALYST` or `COMPLIANCE_LEAD`. `supabase_uid` links to Supabase Auth; authentication is handled externally, not by this API.
+
+**instruments** — 14 symbols: AAPL, MSFT, TSLA, AMZN, NVDA, GOOGL, META, JPM, GS, BAC, XOM, JNJ, QQQ, SPY. Stores ISIN, CUSIP, sector, industry, asset_class, base_price, ann_vol, avg_spread_bps, avg_daily_vol.
+
+**traders** — 200 synthetic traders (TR0001–TR0200). Fields: desk, book, region, type, risk_limit_usd, preferred_symbols, off_hours_tendency, avg_order_size, buy_side_bias.
+
+**clients** — 500 synthetic clients (CL00001–CL00500). Fields: client_type, client_lei, client_domicile, client_mifid_category, aum_tier.
+
+**counterparties** — 8 fixed counterparties (Goldman Sachs, Morgan Stanley, JP Morgan, Citadel Securities, Virtu Financial, Two Sigma, Jane Street, Interactive Brokers).
+
+## Mock Data Script (`mock_data_script.py`)
+
+Generates enterprise-grade synthetic trades and writes them to the database (default) or Kinesis.
+
+- **14 instruments** with GBM price walks, realistic spreads, and sector metadata
+- **200 trader profiles** with desk, region, type, buy_side_bias, off_hours_tendency
+- **500 client profiles** with MiFID category, LEI, AUM tier, domicile
+- **Anomaly seeding** at 12% base rate with 6 types:
+
+| Type | Seeding mechanism |
+|---|---|
+| `fat_finger` | GBM shock multiplier (7–14% price jump) |
+| `volume_spike` | LARGE/BLOCK tier + 2.2–4.8× multiplier |
+| `off_hours` | Forced off-hours timestamp |
+| `spoofing` | spoof_bias > 0.95 → heavy bid/ask size skew |
+| `wash_trade` | buy_side_bias → 0.92–0.99 + LARGE/BLOCK volume |
+| `multi_flag` | Combines fat_finger + off_hours + wash_trade signals |
+
+`seeded_anomaly_type` field is generated per trade but not written to the `trades` table (QA/recall use only).
+
+## ML Pipeline (Optional Batch Layer)
+
+### Feature Engineering (`trade_surveillance/pipelines/feature_engineering.py`)
+
+Reads NDJSON files from S3 `raw/`, engineers 12 features, writes `features/features.parquet` (Snappy, 32 cols). Uses 32 parallel threads + write-to-temp-key + `copy_object` pattern for safe overwrites.
+
+12 engineered features (all float64 unless noted):
 
 | Feature | Grouping |
 |---|---|
 | `spread`, `mid_price`, `relative_spread`, `depth_imbalance` | row-level |
 | `z_score_price`, `z_score_volume` | symbol × date, ddof=1 |
-| `trader_volume_share` | denominator = symbol × date total volume |
-| `is_off_hours` (bool) | US/Eastern timezone, NYSE hours 09:30–16:00 |
+| `trader_volume_share` | symbol × date total volume |
+| `is_off_hours` (bool) | US/Eastern, NYSE hours 09:30–16:00 |
 | `is_otc` (bool) | row-level |
 | `inter_arrival_time`, `return_vs_prev` | symbol, sorted by timestamp |
-| `trader_buy_sell_ratio` | trader_id × date; sell-only traders → 0.0 |
+| `trader_buy_sell_ratio` | trader_id × date; sell-only → 0.0 |
 
-Output schema: 18 original columns + `date` + 12 features = 32 columns.
+### Anomaly Model (`trade_surveillance/pipelines/anomaly_model.py`)
 
-## Anomaly Model Details
+Reads `features/features.parquet`, trains `IsolationForest(n_estimators=200, contamination=0.08, random_state=42)`, runs SHAP TreeExplainer on flagged trades, classifies by rule. Achieved: 88% synthetic recall, ~12,100 anomalies flagged (8% of 152,010 trades).
 
-`trade_surveillance.pipelines.anomaly_model` adds 8 columns to produce the 40-column `anomalies.parquet`:
-
-| Column | dtype | Notes |
-|---|---|---|
-| `anomaly_score` | float64 | Raw `decision_function` output; **negative = more anomalous** |
-| `is_anomaly` | bool | True if model flagged the row (8% of trades) |
-| `anomaly_rank` | float64 | Rank 1 = most anomalous, 152,010 = most normal; re-ranked on real trades only |
-| `top_3_shap_features` | str / None | JSON list of top-3 `[feature, shap_value]` pairs; flagged rows only |
-| `top_shap_feature` | str / None | Strongest SHAP feature name; flagged rows only |
-| `anomaly_type` | str / None | Rule-based: `fat_finger`, `volume_spike`, `off_hours`, `spoofing`, `wash_trade`, `multi_flag`, `unknown` |
-| `injected` | bool | Always False in output (synthetics removed before save) |
-| `injected_type` | str / None | Always None in output |
+Writes three artefacts to S3: `processed/anomalies.parquet`, `model/isolation_forest.pkl`, `model/medians.json`.
 
 Anomaly type rules (applied to flagged trades only):
 
@@ -144,47 +219,13 @@ Anomaly type rules (applied to flagged trades only):
 | `multi_flag` | more than one condition matches |
 | `unknown` | flagged but no condition matches |
 
-To score new trades against the saved model: load `model/medians.json` for NaN-filling, `model/isolation_forest.pkl` for inference. Apply the same bool→int cast for `is_off_hours`/`is_otc` before calling `decision_function`.
+### Agent Orchestrator (`trade_surveillance/agents/`)
 
-## Agent Orchestrator Details (Phase 3)
+4-node LangGraph StateGraph. Entry: `from trade_surveillance import investigate_trade`. Requires `ANTHROPIC_API_KEY` + `AWS_PROFILE` in `.env`.
 
-`trade_surveillance/agents/` contains a 4-node LangGraph StateGraph (`orchestrator.py`). Call via `investigate_trade(trade_id, auto_approve=False)`.
+Nodes: `trade_context_node` → `market_context_node` → `regulatory_screen_node` → `human_review_node` → `compliance_memo_node`.
 
-### Graph nodes
-
-| Node | Purpose |
-|---|---|
-| `trade_context_node` | Loads anomaly record + trader history; computes trader stats |
-| `market_context_node` | Loads ±60-min symbol window; computes market context |
-| `regulatory_screen_node` | Applies 5 rule conditions; derives severity |
-| `human_review_node` | Prints findings + calls `interrupt()` for HIGH severity when `auto_approve=False` |
-| `compliance_memo_node` | Calls Claude Haiku; generates structured JSON memo; uploads to S3 |
-
-### Severity and verdict logic
-
-| Severity | Condition | Verdict override |
-|---|---|---|
-| `HIGH` | FAT_FINGER or VOLUME_SPIKE in matched, or ≥2 rules | `ESCALATE` (if confidence=HIGH) / `MONITOR` |
-| `MEDIUM` | SPOOFING or WASH_TRADE | `MONITOR` |
-| `LOW` | OFF_HOURS only | `DISMISS` |
-| `NONE` | No rules matched | `DISMISS` |
-
-### Caching
-
-`_load_anomalies_df(profile)` and `_load_features_df(profile)` use `@functools.lru_cache` — both 40 MB+ parquet files are downloaded once per session and cached in memory. Callers (`load_anomaly_record`, `load_trader_history`, `load_market_window`) read from the cache.
-
-### Regulatory rules
-
-| Rule | Condition |
-|---|---|
-| `FAT_FINGER` | `z_score_price > 4` |
-| `VOLUME_SPIKE` | `z_score_volume > 4` |
-| `OFF_HOURS` | `is_off_hours == True` |
-| `SPOOFING` | `abs(depth_imbalance) > 0.8` |
-| `WASH_TRADE` | `trader_buy_sell_ratio > 0.9` AND `z_score_volume > 2` |
-
-### Memo schema (Claude output)
-
+Memo schema (Claude Haiku output):
 ```json
 {
   "summary": "...",
@@ -197,14 +238,30 @@ To score new trades against the saved model: load `model/medians.json` for NaN-f
 }
 ```
 
-## Athena Query Notes
+## AWS Resources (ML Pipeline Only)
 
-- Always filter on `dt` to prune partitions: `WHERE dt = DATE '2024-01-15'`
-- `timestamp` is a reserved word in Athena/Presto — always double-quote it: `"timestamp"`
-- Numeric columns in the raw table may be inferred as strings by the Glue JSON classifier; the `raw_trades_v` view explicitly casts them to `DOUBLE`/`BIGINT`
+| Resource | Name |
+|---|---|
+| S3 bucket | `trade-surveillance-bucket` |
+| Region | `us-east-2` |
+| Glue database | `trade_surv` |
+| Athena workgroup | `trade-surveillance-wg` |
+| IAM account ID | `052893174124` |
 
 ## Frontend Guidance
 
-- Keep frontend implementation out of this repository.
-- Use a separate Next.js app (App Router + TypeScript) that consumes backend APIs.
-- Expose only API contracts to frontend; keep model/data access inside backend.
+- Frontend lives in a **separate Next.js repo** (`surveillance-web`). Keep it out of this repo.
+- Next.js App Router + TypeScript + TanStack Query + shadcn/ui.
+- Set `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` in the frontend `.env`.
+- Frontend consumes backend APIs only — never direct DB access.
+- All list endpoints are paginated. All errors use the normalized envelope: `{ error: { code, message, details } }`.
+- Authentication is handled by Supabase Auth. This API trusts the caller; add middleware for token validation when ready.
+- See `frontend-build-context.md` for full frontend IA, UX notes, and backlog.
+
+## Product Goals (MVP)
+
+1. Compliance analysts can triage flagged trades from an alert queue.
+2. Core workflow: view alert → inspect trade → add notes → set disposition.
+3. Fully auditable trail: every change is timestamped with actor.
+4. Model run transparency: analysts see what the model flagged and why.
+5. Target: analyst moves from alert to disposition in < 2 minutes.
