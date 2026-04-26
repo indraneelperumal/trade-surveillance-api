@@ -30,6 +30,14 @@ class Alert(Base):
     top_shap_feature: Mapped[str | None] = mapped_column(String(50))
     top_3_shap_features: Mapped[dict | None] = mapped_column(JSONB)
 
+    feature_spec_version: Mapped[str | None] = mapped_column(String(64))
+    model_features: Mapped[dict | None] = mapped_column(JSONB)
+    scoring_model_run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("model_runs.id"), nullable=True
+    )
+    scored_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    scoring_mode: Mapped[str | None] = mapped_column(String(32))
+
     severity: Mapped[str] = mapped_column(String(10), default="MEDIUM")
     status: Mapped[str] = mapped_column(String(20), default="OPEN")
     disposition: Mapped[str | None] = mapped_column(String(20))
@@ -53,4 +61,6 @@ class Alert(Base):
         Index("ix_alerts_anomaly_type", "anomaly_type"),
         Index("ix_alerts_assigned_to", "assigned_to"),
         Index("ix_alerts_created_at", "created_at"),
+        Index("ix_alerts_scoring_model_run_id", "scoring_model_run_id"),
+        Index("ix_alerts_feature_spec_version", "feature_spec_version"),
     )

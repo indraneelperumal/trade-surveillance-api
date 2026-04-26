@@ -20,6 +20,11 @@ class AlertCreate(BaseModel):
     reviewed_by: UUID | None = None
     reviewed_at: datetime | None = None
     notes: str | None = None
+    feature_spec_version: str | None = None
+    model_features: dict | None = None
+    scoring_model_run_id: UUID | None = None
+    scored_at: datetime | None = None
+    scoring_mode: str | None = None
 
 
 class AlertUpdate(BaseModel):
@@ -42,6 +47,11 @@ class AlertUpdate(BaseModel):
     reviewed_by: UUID | None = None
     reviewed_at: datetime | None = None
     notes: str | None = None
+    feature_spec_version: str | None = None
+    model_features: dict | None = None
+    scoring_model_run_id: UUID | None = None
+    scored_at: datetime | None = None
+    scoring_mode: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -63,6 +73,8 @@ class AlertUpdate(BaseModel):
 
 
 class AlertRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     trade_id: UUID
     anomaly_score: float | None
@@ -70,6 +82,11 @@ class AlertRead(BaseModel):
     anomaly_type: str | None
     top_shap_feature: str | None
     top_3_shap_features: dict | None
+    feature_spec_version: str | None = None
+    model_features: dict | None = None
+    scoring_model_run_id: UUID | None = None
+    scored_at: datetime | None = None
+    scoring_mode: str | None = None
     severity: str
     status: str
     disposition: str | None

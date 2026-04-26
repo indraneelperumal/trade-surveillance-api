@@ -47,13 +47,60 @@ def rename_column(conn: Connection, table_name: str, old_name: str, new_name: st
 
 def run_migrations(conn: Connection) -> None:
     """
-    Keep this function simple and explicit.
-    Add schema changes here with helper functions, for example:
-
-    add_column(conn, "alerts", "reviewer text")
-    drop_column(conn, "alerts", "old_field")
-    rename_column(conn, "alerts", "old_name", "new_name")
+    Idempotent DDL for existing databases. ``create_all`` creates new tables/columns
+    on empty installs; these statements upgrade older Postgres (e.g. Supabase) safely.
     """
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS system_config (
+                key VARCHAR(128) NOT NULL PRIMARY KEY,
+                value TEXT,
+                updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+            )
+            """
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_system_config_updated_at "
+            "ON system_config (updated_at)"
+        )
+    )
+
+    # Phase 1 — ML lineage / scoring columns on alerts
+    conn.execute(
+        text(
+            "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS feature_spec_version VARCHAR(64)"
+        )
+    )
+    conn.execute(text("ALTER TABLE alerts ADD COLUMN IF NOT EXISTS model_features JSONB"))
+    conn.execute(
+        text(
+            "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS scoring_model_run_id UUID "
+            "REFERENCES model_runs (id)"
+        )
+    )
+    conn.execute(
+        text(
+            "ALTER TABLE alerts ADD COLUMN IF NOT EXISTS scored_at TIMESTAMP WITH TIME ZONE"
+        )
+    )
+    conn.execute(
+        text("ALTER TABLE alerts ADD COLUMN IF NOT EXISTS scoring_mode VARCHAR(32)")
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_alerts_scoring_model_run_id "
+            "ON alerts (scoring_model_run_id)"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_alerts_feature_spec_version "
+            "ON alerts (feature_spec_version)"
+        )
+    )
 
 
 def create_tables_and_migrate() -> None:

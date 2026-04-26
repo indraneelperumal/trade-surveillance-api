@@ -13,6 +13,7 @@ from trade_surveillance.models.alert import Alert
 from trade_surveillance.models.investigation import Investigation
 from trade_surveillance.models.investigation_note import InvestigationNote
 from trade_surveillance.models.model_run import ModelRun
+from trade_surveillance.models.system_config import SystemConfig
 
 __all__ = [
     "Base",
@@ -26,6 +27,7 @@ __all__ = [
     "Investigation",
     "InvestigationNote",
     "ModelRun",
+    "SystemConfig",
     "create_tables",
 ]
 
