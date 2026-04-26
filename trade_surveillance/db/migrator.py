@@ -33,13 +33,7 @@ def get_engine() -> Engine:
     db_url = settings.database_url
     if not db_url:
         raise ValueError("Set DATABASE_URL in your environment.")
-    # Supabase pooler/PgBouncer in transaction mode does not support
-    # psycopg3 auto-prepared statements; disable them at connection level.
-    return create_engine(
-        _normalize_db_url(db_url),
-        connect_args={"prepare_threshold": None},
-        future=True,
-    )
+    return create_engine(_normalize_db_url(db_url), future=True)
 
 
 def add_column(conn: Connection, table_name: str, column_sql: str) -> None:
