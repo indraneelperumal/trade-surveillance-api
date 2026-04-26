@@ -10,6 +10,7 @@ from trade_surveillance.schemas.investigations import (
     InvestigationRead,
     InvestigationUpdate,
 )
+from trade_surveillance.schemas.metrics import OverviewMetricsRead, SymbolAlertCount
 from trade_surveillance.schemas.model_runs import ModelRunCreate, ModelRunRead, ModelRunUpdate
 from trade_surveillance.schemas.trades import TradeCreate, TradeRead, TradeUpdate
 from trade_surveillance.schemas.users import UserCreate, UserRead, UserUpdate
@@ -33,6 +34,8 @@ __all__ = [
     "ModelRunCreate",
     "ModelRunRead",
     "ModelRunUpdate",
+    "OverviewMetricsRead",
+    "SymbolAlertCount",
     "UserCreate",
     "UserRead",
     "UserUpdate",

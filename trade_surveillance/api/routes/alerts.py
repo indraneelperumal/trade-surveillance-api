@@ -33,16 +33,34 @@ def create_alert(payload: AlertCreate, db: Session = Depends(get_db_session)) ->
 def list_alerts(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
+    status: str | None = None,
+    severity: str | None = None,
+    symbol: str | None = None,
+    anomaly_type: str | None = Query(default=None, alias="anomalyType"),
     db: Session = Depends(get_db_session),
 ) -> PaginatedResponse[AlertRead]:
-    items = alerts_crud.list_alerts(db, offset=offset, limit=limit)
-    total = alerts_crud.count_alerts(db)
+    items = alerts_crud.list_alerts(
+        db,
+        offset=offset,
+        limit=limit,
+        status=status,
+        severity=severity,
+        symbol=symbol,
+        anomaly_type=anomaly_type,
+    )
+    total = alerts_crud.count_alerts(
+        db,
+        status=status,
+        severity=severity,
+        symbol=symbol,
+        anomaly_type=anomaly_type,
+    )
     return PaginatedResponse(items=items, total=total, offset=offset, limit=limit)
 
 
 @router.get("/{alert_id}", response_model=AlertRead, responses=ERROR_RESPONSES)
 def get_alert(alert_id: UUID, db: Session = Depends(get_db_session)) -> AlertRead:
-    alert = alerts_crud.get_alert(db, alert_id)
+    alert = alerts_crud.get_alert_read(db, alert_id)
     if not alert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
     return alert
