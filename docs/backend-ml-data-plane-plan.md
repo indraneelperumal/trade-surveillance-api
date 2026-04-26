@@ -1,16 +1,16 @@
 ---
 name: Backend ML and data plane
-overview: Supabase Postgres is the system of record; Supabase Storage holds model artifacts. Showcase delivers a thin vertical slice (queue, scoring, Anthropic investigation, model ops) with bulk seed + live trade simulator, 5–8 hand-picked features for v1 IsolationForest, manual + scheduled retrain. Append-only audit trail is deferred unless the UI needs it. Legacy S3/parquet CLIs remain reference-only.
+overview: "Progress: Phases 0–2 shipped (deploy, schema, mock seed + live_simulate CLI). Next: ML train/score (3–4), then investigate + read APIs. Audit events and Render paid Cron deferred; optional GitHub Actions or manual jobs later."
 todos:
   - id: phase-0-env
     content: "Phase 0: Render + Vercel env, CORS, .env.example, runbook for single DATABASE_URL"
-    status: pending
+    status: completed
   - id: phase-1-schema
     content: "Phase 1: SQLAlchemy + migrator for watermarks/system_config, alert ML columns (no audit_events unless UI requires)"
-    status: pending
+    status: completed
   - id: phase-2-seed-sim
-    content: "Phase 2: Seed script + live simulator CLI + README Repro demo"
-    status: pending
+    content: "Phase 2: mock_data_script bulk seed + live_simulate.py + README (no paid Render Cron)"
+    status: completed
   - id: phase-3-ml-train
     content: "Phase 3: trade_surveillance/ml train from Postgres → Storage + ModelRun"
     status: pending
@@ -18,7 +18,7 @@ todos:
     content: "Phase 4: Worker score-batch watermark → upsert alerts + SHAP"
     status: pending
   - id: phase-5-jobs
-    content: "Phase 5: Internal job routes + Render Cron/Worker start commands"
+    content: "Phase 5: Internal job routes; Render Cron/Worker deferred — manual CLI or free GH Actions later"
     status: pending
   - id: phase-6-investigate
     content: "Phase 6: Postgres-backed investigate_trade + API + Investigation + memo Storage"
@@ -29,10 +29,27 @@ todos:
   - id: phase-8-hardening
     content: "Phase 8: E2E checklist, limits, deploy docs"
     status: pending
+  - id: phase-a-audit
+    content: "Backlog Phase A: append-only audit_events + API (only if UI needs timeline)"
+    status: pending
+  - id: backlog-frontend
+    content: "Backlog: Vercel app — queue/context/investigate UX (depends on Phase 7)"
+    status: pending
 isProject: false
 ---
 
 # Backend core: Supabase-first data plane, ML lifecycle, analyst experience
+
+## Execution status (living)
+
+| Status | Items |
+|--------|--------|
+| **Done** | **Phase 0** — `Dockerfile`, `.dockerignore`, `render.yaml`, `.env.example` (Supabase Storage vars), README deploy (Render + Vercel). **Phase 1** — `system_config` table + model columns on `alerts` + idempotent [`migrator.py`](../trade_surveillance/db/migrator.py); ORM + alert schemas/CRUD + web types for new alert fields. **Phase 2** — one-time bulk seed [`mock_data_script.py`](../mock_data_script.py); live batch CLI [`live_simulate.py`](../live_simulate.py) (`gen_trade(timestamp_override=…)`); README demo section; removed duplicate `trade_surveillance/scripts/` seed. |
+| **Deferred (cost / scope)** | **Render paid Cron** for `live_simulate.py` — skipped to avoid billing; run simulator **manually**, **`--interval-sec`** locally during demos, or add **GitHub Actions** (`workflow_dispatch` or sparse `schedule`) later. **Render second worker** for `score-batch` — same until needed; run worker from laptop against prod `DATABASE_URL` if ever required. |
+| **Backlog** | **Phase A** — `audit_events` + timeline API (only if product wants immutable audit UI). **Parallel frontend** — F.1–F.4 in plan (queue endpoint, context, investigate button, model run panel). **GBM continuity across Cron processes** — `mock_data_script._price_state` resets each process; optional persist/rehydrate later. |
+| **Next up** | **Phase 3** — `trade_surveillance/ml` train from Postgres → Supabase Storage + `model_runs` + `system_config` pointers. **Phase 4** — scoring worker / watermark → upsert `alerts`. Then **Phase 5** (minimal internal `POST` job hooks, no paid scheduler), **Phase 6–8** as ordered in sections below. |
+
+---
 
 ## Assumption (updated)
 
@@ -59,7 +76,7 @@ isProject: false
 | Supabase RLS | **Out of scope** for this project; single trusted API/database role is acceptable. |
 | Environments | **Single Supabase project / one `DATABASE_URL`** for **local** and **hosted demo** (same schema; optional different seed datasets). |
 | Memos & media | **Hybrid:** keep **query-friendly** fields in Postgres (summary, verdict, key structured bits, Storage **path** when applicable); put **large blobs** (full memo JSON, exports, future media) in **Supabase Storage**. |
-| **Locked defaults (Q&A)** | **Seed ~100–200k trades** via `mock_data_script.py`. **Live:** `live_simulate.py` ~50–100 rows per **1–5 minutes**. **Scoring:** **≤ ~5 minutes** lag → Render Cron ~5 min. **Write path:** bulk/live CLIs + optional **`POST /trades`**; scoring uses **timestamp watermark** only. |
+| **Locked defaults (Q&A)** | **Seed ~100–200k trades** via `mock_data_script.py`. **Live:** `live_simulate.py` ~50–100 rows per **1–5 minutes** (cadence **manual / local loop** for now — **Render Cron deferred** to avoid paid add-on). **Scoring:** target **≤ ~5 minutes** lag once a worker runs on a schedule (**Render Cron or GitHub Actions — not wired yet**). **Write path:** bulk/live CLIs + optional **`POST /trades`**; scoring uses **timestamp watermark** only. |
 
 ### Glossary (what “volume / write path / scoring SLA” meant in the plan)
 
@@ -76,7 +93,7 @@ These are **planning dimensions**, not your trade table’s `volume` column:
 ### Deployment & worker layout (Render + Vercel)
 
 - **Vercel:** hosts the Next.js app; configure CORS on Render to allow the Vercel origin (`ALLOWED_ORIGINS`).
-- **Render:** hosts FastAPI. For **scoring / retrain / simulator** workloads, prefer **not** blocking the web worker indefinitely: use a **Render Background Worker** or **Cron Job** that runs the same container image with a different **start command** (e.g. `python -m trade_surveillance.worker score-batch`), *or* a scheduled HTTP hit to an internal route — still **without** secret-header auth for MVP, so keep such routes **undocumented / path-obscurity only** and plan to lock down later.
+- **Render:** hosts FastAPI. For **scoring / retrain / simulator** workloads, prefer **not** blocking the web worker indefinitely: when scheduling is adopted, use a **Render Background Worker** or **Cron Job** (or **GitHub Actions** at no extra platform cost) with a different **start command** (e.g. `python -m trade_surveillance.worker score-batch`), *or* a scheduled HTTP hit to an internal route — still **without** secret-header auth for MVP, so keep such routes **undocumented / path-obscurity only** and plan to lock down later. **As of Phase 0–2:** only the **web** service is required; Cron/worker is **backlog** (see Execution status).
 - **Secrets:** `DATABASE_URL`, `ANTHROPIC_API_KEY`, Supabase Storage credentials (if not derived from Supabase service key) live in **Render** and **local `.env`** only — never in the repo.
 
 ---
@@ -126,6 +143,8 @@ flowchart TB
 
 ### Phase 0 — Environment, deployment, and runbook
 
+*Status: **COMPLETE** — deploy artifacts + README; optional second Render service not provisioned.*
+
 **Objective:** Anyone can run API + worker against **one** Supabase DB locally and on Render; Vercel can call the API without CORS failures.
 
 | # | Task | Detail |
@@ -141,6 +160,8 @@ flowchart TB
 ---
 
 ### Phase 1 — Database schema extensions
+
+*Status: **COMPLETE** — `system_config`, alert ML columns, migrator + CRUD/schemas + web adapters.*
 
 **Objective:** Persist **ML lineage**, **watermarks**, and **optional frozen features** without breaking existing CRUD. **No `audit_events` table** unless Phase A is approved.
 
@@ -159,13 +180,15 @@ flowchart TB
 
 ### Phase 2 — Demo data: bulk seed + live simulator
 
+*Status: **COMPLETE** — `mock_data_script.py` + `live_simulate.py`; no Render Cron.*
+
 **Objective:** Reproducible **large** history + **steady trickle** of new trades for the showcase.
 
 | # | Task | Detail |
 |---|------|--------|
 | 2.1 | Seed order | Insert FK parents first: `instruments`, `traders`, `clients`, `counterparties` (if used), then **bulk `trades`** with varied `symbol`, `volume`, `price`, `is_off_hours`, `is_otc`, `relative_spread`, `bid_size`/`ask_size` where applicable. |
 | 2.2 | Bulk seed | One-time: [`mock_data_script.py`](../mock_data_script.py) with `OUTPUT_TARGET=database` (env `NUM_TRADES`, `DB_BATCH_SIZE`). |
-| 2.3 | Live simulator | [`live_simulate.py`](../live_simulate.py) — reuses `gen_trade`; default ~**75** trades per tick, **1–5 min** Cron; optional `--interval-sec` loop. |
+| 2.3 | Live simulator | [`live_simulate.py`](../live_simulate.py) — reuses `gen_trade`; default ~**75** trades per tick; **`--interval-sec`** loop for local/demo. **Render Cron** for the same cadence → **deferred** (see Execution status). |
 | 2.4 | README | “Repro demo”: seed command, optional simulator, expected row counts, reminder to run **train** (Phase 3) then **score** (Phase 4). |
 
 **Exit criteria:** After seed, `SELECT count(*) FROM trades` matches target; simulator adds rows visible on next worker poll.
@@ -173,6 +196,8 @@ flowchart TB
 ---
 
 ### Phase 3 — ML package: training from Postgres → Storage → `model_runs`
+
+*Status: **NOT STARTED**.*
 
 **Objective:** First **IsolationForest** trained **only** from Supabase data; artifacts in **Storage**; run recorded in **`model_runs`**.
 
@@ -191,6 +216,8 @@ flowchart TB
 
 ### Phase 4 — ML package: scoring worker (micro-batch)
 
+*Status: **NOT STARTED** (depends on Phase 3).*
+
 **Objective:** New trades get **idempotent** `alerts` rows with scores, **optional SHAP** for flagged subset, **`feature_spec_version`** set.
 
 | # | Task | Detail |
@@ -208,19 +235,23 @@ flowchart TB
 
 ### Phase 5 — Job scheduling and internal triggers
 
-**Objective:** **Manual** kick + **Render Cron** automation; **no** long jobs on default FastAPI worker thread.
+*Status: **NOT STARTED** — **5.2 Render Cron** and second worker **deferred** (cost); **5.1** + manual CLI / optional **GitHub Actions** are the near-term path.*
+
+**Objective:** **Manual** kick + **scheduled** automation (Render Cron **or** GitHub Actions **or** laptop cron); **no** long jobs on default FastAPI worker thread.
 
 | # | Task | Detail |
 |---|------|--------|
-| 5.1 | Internal routes (minimal) | e.g. `POST /api/v1/internal/jobs/train`, `POST /api/v1/internal/jobs/score` — for **quick** smoke only; document that Cron should call **worker CLI** for heavy train/score. |
-| 5.2 | Render Cron | Schedule `score-batch` every **~5 minutes** (matches locked scoring SLA); schedule `train` nightly if desired. |
+| 5.1 | Internal routes (minimal) | e.g. `POST /api/v1/internal/jobs/train`, `POST /api/v1/internal/jobs/score` — for **quick** smoke only; document that production-like loads should call **worker CLI** (not inline in web process). |
+| 5.2 | Scheduled jobs | **Backlog / deferred:** Render Cron for `score-batch` ~**5 min** + optional nightly `train`. **Alternative:** `workflow_dispatch` or sparse `schedule` in GitHub Actions hitting internal route or running container job. |
 | 5.3 | Idempotency | Advance watermark only after successful batch commit (or equivalent). |
 
-**Exit criteria:** Cron runs visible in Render logs; DB shows advancing processing.
+**Exit criteria:** At least one **manual** train + score path documented; when scheduling is enabled, logs show recurring runs and DB watermarks advance. *(Full “Cron visible in Render” criterion waits on 5.2 or GH Actions.)*
 
 ---
 
 ### Phase 6 — Investigation: Postgres-backed LangGraph + API
+
+*Status: **NOT STARTED**.*
 
 **Objective:** `investigate_trade` uses **DB** for trade, trader history, market window; persists [`Investigation`](../trade_surveillance/models/investigation.py); **Anthropic** live; optional **Storage** for oversized memo.
 
@@ -238,6 +269,8 @@ flowchart TB
 
 ### Phase 7 — Analyst-facing read APIs and metrics
 
+*Status: **NOT STARTED**.*
+
 **Objective:** Fewer round-trips for the Next.js app; queue semantics for triage.
 
 | # | Task | Detail |
@@ -251,6 +284,8 @@ flowchart TB
 ---
 
 ### Phase 8 — Hardening, limits, and demo polish
+
+*Status: **NOT STARTED**.*
 
 **Objective:** Safe enough for a **public demo** narrative without production claims.
 
