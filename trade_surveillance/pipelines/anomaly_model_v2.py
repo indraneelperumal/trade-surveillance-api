@@ -584,7 +584,7 @@ def main() -> None:
 
     print("\n[8/8] Writing results to Supabase ...")
     artifact_keys = upload_artifacts(model, medians)
-    n_written     = write_alerts_to_db(df_anomalies, model_run_id)
+    # model_runs row must exist before alerts — alerts.scoring_model_run_id is a FK
     write_model_run_to_db(
         model_run_id=model_run_id,
         total_records=n_total,
@@ -594,6 +594,7 @@ def main() -> None:
         runtime_seconds=runtime,
         started_at=started_at,
     )
+    n_written = write_alerts_to_db(df_anomalies, model_run_id)
 
     # Final summary
     type_counts = df_anomalies["anomaly_type"].value_counts()
