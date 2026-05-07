@@ -28,7 +28,7 @@ class Alert(Base):
     anomaly_rank: Mapped[int | None] = mapped_column()
     anomaly_type: Mapped[str | None] = mapped_column(String(30))
     top_shap_feature: Mapped[str | None] = mapped_column(String(50))
-    top_3_shap_features: Mapped[dict | None] = mapped_column(JSONB)
+    top_3_shap_features: Mapped[list | None] = mapped_column(JSONB)
 
     feature_spec_version: Mapped[str | None] = mapped_column(String(64))
     model_features: Mapped[dict | None] = mapped_column(JSONB)

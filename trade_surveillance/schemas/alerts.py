@@ -12,7 +12,7 @@ class AlertCreate(BaseModel):
     anomaly_rank: int | None = None
     anomaly_type: str | None = None
     top_shap_feature: str | None = None
-    top_3_shap_features: dict | None = None
+    top_3_shap_features: list | None = None
     severity: str = "MEDIUM"
     status: str = "OPEN"
     disposition: str | None = None
@@ -34,7 +34,7 @@ class AlertUpdate(BaseModel):
     anomaly_rank: int | None = None
     anomaly_type: str | None = None
     top_shap_feature: str | None = None
-    top_3_shap_features: dict | None = None
+    top_3_shap_features: list | None = None
     severity: str | None = None
     status: str | None = None
     disposition: str | None = None
@@ -81,7 +81,7 @@ class AlertRead(BaseModel):
     anomaly_rank: int | None
     anomaly_type: str | None
     top_shap_feature: str | None
-    top_3_shap_features: dict | None
+    top_3_shap_features: list | None
     feature_spec_version: str | None = None
     model_features: dict | None = None
     scoring_model_run_id: UUID | None = None
