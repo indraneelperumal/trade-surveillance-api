@@ -1,3 +1,6 @@
+# DEPRECATED — AWS is no longer used in this project. This file exists only
+# because agents/tools.py still imports from it. Both will be replaced by
+# tools_db.py + a rewritten orchestrator.py in the next implementation step.
 """Shared S3 client helpers (used by pipelines, agents, and optional scripts)."""
 
 from __future__ import annotations

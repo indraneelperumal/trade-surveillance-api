@@ -1,3 +1,7 @@
+# DEPRECATED — This file reads anomaly/feature data from AWS S3, which is no
+# longer used in this project.  It will be replaced by tools_db.py that reads
+# the same data from PostgreSQL (alerts.model_features JSONB).  Do NOT add new
+# logic here.
 import functools
 import io
 import json
