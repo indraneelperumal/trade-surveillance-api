@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from urllib.parse import urlparse
 
 from sqlalchemy import create_engine, text
@@ -25,6 +26,7 @@ def create_engine_from_url(db_url: str) -> Engine:
     return create_engine(db_url, future=True, connect_args=connect_args)
 
 
+@lru_cache(maxsize=1)
 def get_engine() -> Engine:
     settings = get_settings()
     db_url = settings.database_url

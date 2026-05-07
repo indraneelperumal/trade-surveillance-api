@@ -11,17 +11,19 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True)
 class Settings:
+    # ── API ──────────────────────────────────────────────────────────────────
     app_env: str
     allowed_origins: str
     auto_migrate_on_startup: bool
     database_url: str
-    s3_bucket: str
-    raw_prefix: str
-    features_key: str
-    anomalies_key: str
-    model_key: str
-    medians_key: str
-    memos_prefix: str
+
+    # ── Supabase Storage (ML pipeline artefacts) ─────────────────────────────
+    supabase_url: str
+    supabase_service_key: str
+    storage_bucket: str
+    features_key: str   # path inside bucket for features.parquet
+    model_key: str      # path inside bucket for isolation_forest.pkl
+    medians_key: str    # path inside bucket for medians.json
 
 
 def _env_str(name: str, default: str) -> str:
@@ -44,27 +46,15 @@ def get_settings() -> Settings:
         allowed_origins=_env_str("ALLOWED_ORIGINS", "http://localhost:3000"),
         auto_migrate_on_startup=_env_bool("AUTO_MIGRATE_ON_STARTUP", True),
         database_url=_env_str("DATABASE_URL", ""),
-        s3_bucket=_env_str("TSP_S3_BUCKET", "trade-surveillance-bucket"),
-        raw_prefix=_env_str("TSP_RAW_PREFIX", "raw/"),
-        features_key=_env_str("TSP_FEATURES_KEY", "features/features.parquet"),
-        anomalies_key=_env_str("TSP_ANOMALIES_KEY", "processed/anomalies.parquet"),
-        model_key=_env_str("TSP_MODEL_KEY", "model/isolation_forest.pkl"),
-        medians_key=_env_str("TSP_MEDIANS_KEY", "model/medians.json"),
-        memos_prefix=_env_str("TSP_MEMOS_PREFIX", "memos"),
+        supabase_url=_env_str("SUPABASE_URL", ""),
+        supabase_service_key=_env_str("SUPABASE_SERVICE_ROLE_KEY", ""),
+        storage_bucket=_env_str("SUPABASE_STORAGE_BUCKET", "trade-surveillance-artifacts"),
+        features_key=_env_str("SUPABASE_FEATURES_KEY", "features/features.parquet"),
+        model_key=_env_str("SUPABASE_MODEL_KEY", "model/isolation_forest.pkl"),
+        medians_key=_env_str("SUPABASE_MEDIANS_KEY", "model/medians.json"),
     )
 
 
 def clear_settings_cache() -> None:
     """Used in tests to pick up changed environment variables."""
     get_settings.cache_clear()
-
-
-def require_aws_profile() -> str:
-    """Raise if AWS_PROFILE is missing (batch jobs and agents use named profiles)."""
-    load_dotenv()
-    profile = os.environ.get("AWS_PROFILE")
-    if not profile:
-        raise ValueError(
-            "AWS_PROFILE is not set. Add it to .env or export it in your shell."
-        )
-    return profile
