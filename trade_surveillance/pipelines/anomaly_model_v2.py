@@ -435,10 +435,19 @@ def write_alerts_to_db(df_anomalies: pd.DataFrame, model_run_id: str) -> int:
             for col in FEATURE_COLS
         }
 
+        # trade_id may arrive as a bytes object (16-byte binary UUID) if the
+        # Parquet was written before the str() cast was added to load_from_db.
+        # Decode it properly so psycopg3 receives a valid UUID string.
+        raw_tid = rec["trade_id"]
+        if isinstance(raw_tid, (bytes, bytearray)):
+            trade_id_str = str(uuid.UUID(bytes=bytes(raw_tid)))
+        else:
+            trade_id_str = str(raw_tid)
+
         anomaly_type = rec["anomaly_type"] or "unknown"
         rows.append({
             "id":                    str(uuid.uuid4()),
-            "trade_id":              str(rec["trade_id"]),
+            "trade_id":              trade_id_str,
             "anomaly_score":         float(rec["anomaly_score"]),
             # anomaly_rank is a float (pandas rank uses average method);
             # round before int to avoid silent truncation of 0.5 values.

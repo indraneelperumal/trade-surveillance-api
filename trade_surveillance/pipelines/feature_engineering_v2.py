@@ -139,6 +139,12 @@ def load_from_db() -> pd.DataFrame:
     with engine.connect() as conn:
         df = pd.read_sql(text(query), conn)
 
+    # psycopg3 returns UUID columns as Python uuid.UUID objects; PyArrow
+    # serialises those as 16-byte binary in Parquet. Cast to str here so
+    # the Parquet stores a plain UUID string and anomaly_model_v2 can insert
+    # it directly into the alerts.trade_id UUID column without decoding.
+    df["trade_id"] = df["trade_id"].astype(str)
+
     df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
     df["trade_date"] = pd.to_datetime(df["trade_date"]).dt.date
 
