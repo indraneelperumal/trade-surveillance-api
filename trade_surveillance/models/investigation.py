@@ -26,7 +26,9 @@ class Investigation(Base):
 
     verdict: Mapped[str] = mapped_column(String(20), nullable=False)
     confidence: Mapped[str | None] = mapped_column(String(10))
-    rule_violated: Mapped[str | None] = mapped_column(String(50))
+    # Text (unbounded) — Claude's rule_violated values regularly exceed 50 chars.
+    # String(50) caused silent truncation / StringDataRightTruncation errors.
+    rule_violated: Mapped[str | None] = mapped_column(Text)
 
     summary: Mapped[str | None] = mapped_column(Text)
     evidence_points: Mapped[list | None] = mapped_column(JSONB)
@@ -35,6 +37,11 @@ class Investigation(Base):
 
     memo_json: Mapped[dict | None] = mapped_column(JSONB)
     memo_storage_key: Mapped[str | None] = mapped_column(String(255))
+
+    # Agent metadata — which model version produced this investigation, and
+    # any error that prevented a clean run.
+    model_version: Mapped[str | None] = mapped_column(String(50))
+    error_message: Mapped[str | None] = mapped_column(Text)
 
     initiated_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
     is_auto: Mapped[bool] = mapped_column(default=True)

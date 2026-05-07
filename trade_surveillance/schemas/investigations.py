@@ -17,6 +17,8 @@ class InvestigationCreate(BaseModel):
     data_gaps: str | None = None
     memo_json: dict | None = None
     memo_storage_key: str | None = None
+    model_version: str | None = None
+    error_message: str | None = None
     initiated_by: UUID | None = None
     is_auto: bool = True
     started_at: datetime | None = None
@@ -33,6 +35,8 @@ class InvestigationUpdate(BaseModel):
     data_gaps: str | None = None
     memo_json: dict | None = None
     memo_storage_key: str | None = None
+    model_version: str | None = None
+    error_message: str | None = None
     initiated_by: UUID | None = None
     is_auto: bool | None = None
     started_at: datetime | None = None
@@ -53,6 +57,8 @@ class InvestigationRead(BaseModel):
     data_gaps: str | None
     memo_json: dict | None
     memo_storage_key: str | None
+    model_version: str | None
+    error_message: str | None
     initiated_by: UUID | None
     is_auto: bool
     started_at: datetime

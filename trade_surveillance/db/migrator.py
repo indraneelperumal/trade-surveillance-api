@@ -104,6 +104,30 @@ def run_migrations(conn: Connection) -> None:
         )
     )
 
+    # Phase 2 — investigations schema hardening for agent output
+    #
+    # Showstopper: rule_violated was VARCHAR(50) which truncates Claude Sonnet
+    # output (e.g. "VOLUME_SPIKE (abnormally large trade volume far outside
+    # normal ranges…)" > 50 chars).  Widen to TEXT unconditionally.
+    conn.execute(
+        text(
+            "ALTER TABLE investigations "
+            "ALTER COLUMN rule_violated TYPE TEXT USING rule_violated::TEXT"
+        )
+    )
+    conn.execute(
+        text(
+            "ALTER TABLE investigations ADD COLUMN IF NOT EXISTS "
+            "model_version VARCHAR(50)"
+        )
+    )
+    conn.execute(
+        text(
+            "ALTER TABLE investigations ADD COLUMN IF NOT EXISTS "
+            "error_message TEXT"
+        )
+    )
+
 
 def create_tables_and_migrate() -> None:
     engine = get_engine()
