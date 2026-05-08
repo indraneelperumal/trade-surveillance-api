@@ -30,7 +30,6 @@ from typing import TypedDict
 import anthropic
 import pandas as pd
 from dotenv import load_dotenv
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from sqlalchemy import text
@@ -518,8 +517,7 @@ def build_graph(auto_approve: bool = True):
     )
     graph.add_edge("compliance_memo_node", END)
 
-    checkpointer = MemorySaver()
-    return graph.compile(checkpointer=checkpointer)
+    return graph.compile()
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -532,16 +530,12 @@ def investigate_trade(
     """
     Run the compliance investigation pipeline for a given alert.
 
-    Parameters
-    ----------
-    alert_id      UUID string of the alert row to investigate.
-    auto_approve  Skip the human-review interrupt node (default True).
-                  Set False only for interactive CLI usage.
+    For auto_approve=True (the API trigger path) this runs the nodes directly
+    as plain function calls — no LangGraph graph overhead — which is simpler,
+    faster, and gives a clear traceback on any failure.
 
-    Returns
-    -------
-    The final LangGraph state dict, including compliance_memo, verdict,
-    confidence, and optionally error.
+    For auto_approve=False (interactive CLI) the full LangGraph graph with the
+    human_review interrupt node is used instead.
     """
     load_dotenv()
 
@@ -551,21 +545,51 @@ def investigate_trade(
             "ANTHROPIC_API_KEY is not set. Add it to .env or export it in your shell."
         )
 
-    print("=" * 60)
-    print("  investigate_trade")
-    print("=" * 60)
-    print(f"  alert_id:     {alert_id}")
-    print(f"  auto_approve: {auto_approve}")
+    logger.info("investigate_trade started: alert_id=%s auto_approve=%s", alert_id, auto_approve)
 
-    graph  = build_graph(auto_approve=auto_approve)
-    config = {"configurable": {"thread_id": alert_id}}
-    result = graph.invoke({"alert_id": alert_id}, config)
+    if not auto_approve:
+        # Full LangGraph graph with human-review interrupt (CLI only).
+        graph  = build_graph(auto_approve=False)
+        result = graph.invoke({"alert_id": alert_id})
+        logger.info(
+            "investigate_trade done (graph): verdict=%s confidence=%s",
+            result.get("verdict"), result.get("confidence"),
+        )
+        return result
 
-    print("\n" + "─" * 49)
-    print(f"  verdict:    {result.get('verdict', 'N/A')}")
-    print(f"  confidence: {result.get('confidence', 'N/A')}")
-    if result.get("error"):
-        print(f"  error:      {result['error']}")
-    print("─" * 49)
+    # ── Direct pipeline (auto_approve=True — API trigger path) ────────────────
+    # Run nodes sequentially as plain functions to avoid any LangGraph
+    # invocation surprises.  Each node returns a partial state dict; we merge
+    # them manually the same way StateGraph would.
 
-    return result
+    state: dict = {"alert_id": alert_id}
+
+    # Node 1 — trade context
+    logger.info("[1/4] trade_context_node")
+    node1 = _make_trade_context_node()
+    state.update(node1(state))
+    if state.get("error"):
+        logger.warning("trade_context_node set error: %s", state["error"])
+
+    # Node 2 — market context
+    logger.info("[2/4] market_context_node")
+    node2 = _make_market_context_node()
+    state.update(node2(state))
+    if state.get("error") and "market" in str(state.get("error", "")):
+        logger.warning("market_context_node set error: %s", state["error"])
+
+    # Node 3 — regulatory screen
+    logger.info("[3/4] regulatory_screen_node")
+    node3 = _make_regulatory_screen_node()
+    state.update(node3(state))
+
+    # Node 4 — compliance memo + DB write
+    logger.info("[4/4] compliance_memo_node")
+    node4 = _make_compliance_memo_node()
+    state.update(node4(state))
+
+    logger.info(
+        "investigate_trade done: verdict=%s confidence=%s error=%s",
+        state.get("verdict"), state.get("confidence"), state.get("error"),
+    )
+    return state
