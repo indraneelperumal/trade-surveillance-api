@@ -302,7 +302,13 @@ def _write_investigation_to_db(
                 "Fallback investigation INSERT also failed for alert %s: %s",
                 alert_id, fallback_exc,
             )
-            raise fallback_exc
+            # Store the exception so Step 3 (status update) still runs below.
+            # We re-raise AFTER the status update so the alert is never stuck OPEN.
+            _insert_exc: Exception | None = fallback_exc
+        else:
+            _insert_exc = None
+    else:
+        _insert_exc = None
 
     # ── Step 3: Alert status update (own transaction — always attempted) ──────
     try:
@@ -318,6 +324,9 @@ def _write_investigation_to_db(
             )
     except Exception as upd_exc:
         logger.warning("Alert status update failed for %s: %s", alert_id, upd_exc)
+
+    if _insert_exc is not None:
+        raise _insert_exc
 
     return investigation_id
 
@@ -433,8 +442,39 @@ def _make_compliance_memo_node():
             }
 
         except Exception as exc:
-            warnings.warn(f"compliance_memo_node error: {exc}")
-            return {"error": str(exc), "verdict": "MONITOR", "confidence": "LOW"}
+            logger.error(
+                "compliance_memo_node FAILED for alert %s: %s",
+                alert_id, exc, exc_info=True,
+            )
+            error_msg = str(exc)
+            error_memo = {
+                "summary": "LLM call failed — investigation could not be completed.",
+                "evidence_points": [
+                    f"Error: {error_msg[:400]}",
+                    "The Anthropic API call or JSON parsing failed.",
+                    "Re-trigger investigation once the error is resolved.",
+                ],
+                "rule_violated": "NONE",
+                "verdict": "MONITOR",
+                "confidence": "LOW",
+                "recommended_action": (
+                    f"Re-trigger investigation for alert {alert_id} "
+                    "after confirming the LLM API key and model name are correct."
+                ),
+                "data_gaps": f"LLM response unavailable. Error: {error_msg}",
+            }
+            try:
+                _write_investigation_to_db(
+                    alert_id, error_memo,
+                    model_version="llm_error",
+                    error_message=error_msg,
+                )
+            except Exception as db_exc:
+                logger.error(
+                    "Could not persist error investigation for alert %s: %s",
+                    alert_id, db_exc,
+                )
+            return {"error": error_msg, "verdict": "MONITOR", "confidence": "LOW"}
 
     return compliance_memo_node
 
