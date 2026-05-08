@@ -258,7 +258,7 @@ def _write_investigation_to_db(
                         memo_json, is_auto, model_version, error_message,
                         started_at, completed_at, created_at, updated_at
                     ) VALUES (
-                        :id::uuid, :alert_id::uuid,
+                        CAST(:id AS uuid), CAST(:alert_id AS uuid),
                         :verdict, :confidence, :rule_violated,
                         :summary, CAST(:evidence_points AS jsonb),
                         :recommended_action, :data_gaps,
@@ -286,7 +286,7 @@ def _write_investigation_to_db(
                             memo_json, is_auto,
                             started_at, completed_at, created_at, updated_at
                         ) VALUES (
-                            :id::uuid, :alert_id::uuid,
+                            CAST(:id AS uuid), CAST(:alert_id AS uuid),
                             :verdict, :confidence, :rule_violated,
                             :summary, CAST(:evidence_points AS jsonb),
                             :recommended_action, :data_gaps,
@@ -316,7 +316,7 @@ def _write_investigation_to_db(
                 text("""
                     UPDATE alerts
                     SET status = 'IN_PROGRESS', updated_at = :now
-                    WHERE id = :alert_id::uuid
+                    WHERE id = CAST(:alert_id AS uuid)
                       AND status = 'OPEN'
                 """),
                 {"alert_id": alert_id, "now": now},

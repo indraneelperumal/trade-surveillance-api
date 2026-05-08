@@ -118,7 +118,7 @@ def load_alert_with_trade(alert_id: str) -> dict:
                     t.currency
                 FROM alerts a
                 JOIN trades t ON t.trade_id = a.trade_id
-                WHERE a.id = :alert_id::uuid
+                WHERE a.id = CAST(:alert_id AS uuid)
             """),
             {"alert_id": alert_id},
         ).mappings().one_or_none()
