@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from uuid import UUID
 
@@ -16,6 +17,26 @@ from trade_surveillance.schemas.investigations import (
     InvestigationRead,
     InvestigationUpdate,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _run_investigation_safe(alert_id: str) -> None:
+    """
+    Background-task wrapper for investigate_trade.
+
+    FastAPI BackgroundTasks silently swallows exceptions — without this wrapper
+    any crash would be invisible in Render logs and the alert would be left OPEN.
+    On failure, we log the full traceback so it appears in Render's log stream.
+    """
+    try:
+        investigate_trade(alert_id)
+    except Exception as exc:
+        logger.error(
+            "Investigation background task FAILED for alert %s: %s",
+            alert_id, exc,
+            exc_info=True,   # includes full traceback in Render logs
+        )
 
 router = APIRouter(prefix="/investigations")
 ERROR_RESPONSES = {
@@ -92,7 +113,7 @@ def trigger_investigation(
     # All guards passed — fire the agent in the background and return 202.
     # The orchestrator writes the investigation row and sets alert→IN_PROGRESS
     # atomically when it completes.
-    background_tasks.add_task(investigate_trade, str(alert_id))
+    background_tasks.add_task(_run_investigation_safe, str(alert_id))
 
     return {
         "status": "queued",

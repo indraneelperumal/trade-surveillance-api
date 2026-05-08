@@ -20,6 +20,7 @@ All data is sourced exclusively from PostgreSQL.  No AWS dependencies.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 import warnings
@@ -32,6 +33,7 @@ from dotenv import load_dotenv
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
+from sqlalchemy import text
 
 from trade_surveillance.agents.prompts import SYSTEM_PROMPT, build_user_prompt
 from trade_surveillance.agents.tools_db import (
@@ -42,7 +44,12 @@ from trade_surveillance.agents.tools_db import (
     load_trader_history,
 )
 from trade_surveillance.db.migrator import get_engine
-from sqlalchemy import text
+
+logger = logging.getLogger(__name__)
+
+# Read the model from env so it can be overridden on Render without a redeploy.
+# Default: claude-3-5-sonnet-20241022 (widely available, verified working).
+_ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
 
 
 # ── Graph state ───────────────────────────────────────────────────────────────
@@ -208,72 +215,109 @@ def _write_investigation_to_db(
     alert_id: str,
     memo: dict,
     *,
-    model_version: str = "claude-sonnet-4-6",
+    model_version: str = _ANTHROPIC_MODEL,
     error_message: str | None = None,
 ) -> str:
     """
     Persist the compliance memo as a new investigations row.
     Returns the new investigation id (UUID string).
+
+    Strategy:
+    1. Try the full INSERT (includes model_version + error_message added in Phase 2
+       migration). If the migration has run, this succeeds.
+    2. If the full INSERT fails (e.g. columns not yet added on that DB), fall back
+       to a minimal INSERT so the investigation is never silently lost.
+    3. Alert status update runs in a SEPARATE transaction so it always commits
+       even if step 1 or 2 had a rollback.
     """
     investigation_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
-
     engine = get_engine()
-    with engine.begin() as conn:
-        conn.execute(
-            text("""
-                INSERT INTO investigations (
-                    id, alert_id, verdict, confidence, rule_violated,
-                    summary, evidence_points, recommended_action, data_gaps,
-                    memo_json, is_auto, model_version, error_message,
-                    started_at, completed_at, created_at, updated_at
-                ) VALUES (
-                    :id::uuid,
-                    :alert_id::uuid,
-                    :verdict,
-                    :confidence,
-                    :rule_violated,
-                    :summary,
-                    CAST(:evidence_points AS jsonb),
-                    :recommended_action,
-                    :data_gaps,
-                    CAST(:memo_json AS jsonb),
-                    TRUE,
-                    :model_version,
-                    :error_message,
-                    :now,
-                    :now,
-                    :now,
-                    :now
-                )
-            """),
-            {
-                "id":                 investigation_id,
-                "alert_id":          alert_id,
-                "verdict":           memo.get("verdict", "MONITOR"),
-                "confidence":        memo.get("confidence", "LOW"),
-                "rule_violated":     memo.get("rule_violated"),
-                "summary":           memo.get("summary"),
-                "evidence_points":   json.dumps(memo.get("evidence_points") or []),
-                "recommended_action": memo.get("recommended_action"),
-                "data_gaps":         memo.get("data_gaps"),
-                "memo_json":         json.dumps(memo),
-                "model_version":     model_version,
-                "error_message":     error_message,
-                "now":               now,
-            },
-        )
 
-        # Mark the parent alert as IN_PROGRESS so analysts know the agent ran.
-        conn.execute(
-            text("""
-                UPDATE alerts
-                SET status = 'IN_PROGRESS', updated_at = :now
-                WHERE id = :alert_id::uuid
-                  AND status = 'OPEN'
-            """),
-            {"alert_id": alert_id, "now": now},
+    base_params = {
+        "id":                  investigation_id,
+        "alert_id":            alert_id,
+        "verdict":             memo.get("verdict", "MONITOR"),
+        "confidence":          memo.get("confidence", "LOW"),
+        "rule_violated":       memo.get("rule_violated"),
+        "summary":             memo.get("summary"),
+        "evidence_points":     json.dumps(memo.get("evidence_points") or []),
+        "recommended_action":  memo.get("recommended_action"),
+        "data_gaps":           memo.get("data_gaps"),
+        "memo_json":           json.dumps(memo),
+        "now":                 now,
+    }
+
+    # ── Step 1: Full INSERT (with optional Phase 2 columns) ───────────────────
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO investigations (
+                        id, alert_id, verdict, confidence, rule_violated,
+                        summary, evidence_points, recommended_action, data_gaps,
+                        memo_json, is_auto, model_version, error_message,
+                        started_at, completed_at, created_at, updated_at
+                    ) VALUES (
+                        :id::uuid, :alert_id::uuid,
+                        :verdict, :confidence, :rule_violated,
+                        :summary, CAST(:evidence_points AS jsonb),
+                        :recommended_action, :data_gaps,
+                        CAST(:memo_json AS jsonb), TRUE,
+                        :model_version, :error_message,
+                        :now, :now, :now, :now
+                    )
+                """),
+                {**base_params, "model_version": model_version, "error_message": error_message},
+            )
+    except Exception as primary_exc:
+        # ── Step 2: Fallback INSERT without optional columns ──────────────────
+        logger.warning(
+            "Full investigation INSERT failed (%s) — retrying without optional columns. "
+            "Run migrations to resolve permanently.",
+            primary_exc,
         )
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("""
+                        INSERT INTO investigations (
+                            id, alert_id, verdict, confidence, rule_violated,
+                            summary, evidence_points, recommended_action, data_gaps,
+                            memo_json, is_auto,
+                            started_at, completed_at, created_at, updated_at
+                        ) VALUES (
+                            :id::uuid, :alert_id::uuid,
+                            :verdict, :confidence, :rule_violated,
+                            :summary, CAST(:evidence_points AS jsonb),
+                            :recommended_action, :data_gaps,
+                            CAST(:memo_json AS jsonb), TRUE,
+                            :now, :now, :now, :now
+                        )
+                    """),
+                    base_params,
+                )
+        except Exception as fallback_exc:
+            logger.error(
+                "Fallback investigation INSERT also failed for alert %s: %s",
+                alert_id, fallback_exc,
+            )
+            raise fallback_exc
+
+    # ── Step 3: Alert status update (own transaction — always attempted) ──────
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    UPDATE alerts
+                    SET status = 'IN_PROGRESS', updated_at = :now
+                    WHERE id = :alert_id::uuid
+                      AND status = 'OPEN'
+                """),
+                {"alert_id": alert_id, "now": now},
+            )
+    except Exception as upd_exc:
+        logger.warning("Alert status update failed for %s: %s", alert_id, upd_exc)
 
     return investigation_id
 
@@ -321,7 +365,7 @@ def _make_compliance_memo_node():
             prompt = build_user_prompt(state)
 
             response = client.messages.create(
-                model="claude-sonnet-4-6",
+                model=_ANTHROPIC_MODEL,
                 temperature=0,           # Deterministic — required for compliance
                 max_tokens=1800,
                 system=SYSTEM_PROMPT,
@@ -376,7 +420,7 @@ def _make_compliance_memo_node():
             # ── Persist to database ───────────────────────────────────────────
             try:
                 investigation_id = _write_investigation_to_db(
-                    alert_id, memo, model_version="claude-sonnet-4-6"
+                    alert_id, memo, model_version=_ANTHROPIC_MODEL
                 )
                 memo["_investigation_id"] = investigation_id
             except Exception as db_exc:
