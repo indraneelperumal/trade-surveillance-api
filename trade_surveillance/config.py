@@ -17,6 +17,9 @@ class Settings:
     auto_migrate_on_startup: bool
     database_url: str
 
+    # ── Agent / LLM ──────────────────────────────────────────────────────────
+    anthropic_api_key: str   # Required for POST /investigations/run/:id
+
     # ── Supabase Storage (ML pipeline artefacts) ─────────────────────────────
     supabase_url: str
     supabase_service_key: str
@@ -46,6 +49,7 @@ def get_settings() -> Settings:
         allowed_origins=_env_str("ALLOWED_ORIGINS", "http://localhost:3000"),
         auto_migrate_on_startup=_env_bool("AUTO_MIGRATE_ON_STARTUP", True),
         database_url=_env_str("DATABASE_URL", ""),
+        anthropic_api_key=_env_str("ANTHROPIC_API_KEY", ""),
         supabase_url=_env_str("SUPABASE_URL", ""),
         supabase_service_key=_env_str("SUPABASE_SERVICE_ROLE_KEY", ""),
         storage_bucket=_env_str("SUPABASE_STORAGE_BUCKET", "trade-surveillance-artifacts"),

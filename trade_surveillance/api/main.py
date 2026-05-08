@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +15,7 @@ from trade_surveillance.api.router import api_router
 from trade_surveillance.config import get_settings
 from trade_surveillance.db.migrator import create_tables_and_migrate
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 app = FastAPI(
@@ -38,6 +41,11 @@ app.add_exception_handler(Exception, unhandled_exception_handler)
 def startup_tasks() -> None:
     if settings.auto_migrate_on_startup:
         create_tables_and_migrate()
+    if not settings.anthropic_api_key:
+        logger.warning(
+            "ANTHROPIC_API_KEY is not set — "
+            "POST /api/v1/investigations/run/:id will return 503 until it is configured."
+        )
 
 
 @app.get("/health")
