@@ -17,6 +17,14 @@ class Settings:
     auto_migrate_on_startup: bool
     database_url: str
 
+    # ── Auth ─────────────────────────────────────────────────────────────────
+    # Supabase JWT secret — Project Settings → API → JWT Secret.
+    # Leave empty to disable JWT validation (APP_ENV=development only).
+    supabase_jwt_secret: str
+    # Optional: https://<project-ref>.supabase.co/auth/v1
+    # When set, JWT issuer claim is validated. Strongly recommended for production.
+    supabase_jwt_issuer: str
+
     # ── Agent / LLM ──────────────────────────────────────────────────────────
     anthropic_api_key: str   # Required for POST /investigations/run/:id
 
@@ -49,6 +57,8 @@ def get_settings() -> Settings:
         allowed_origins=_env_str("ALLOWED_ORIGINS", "http://localhost:3000"),
         auto_migrate_on_startup=_env_bool("AUTO_MIGRATE_ON_STARTUP", True),
         database_url=_env_str("DATABASE_URL", ""),
+        supabase_jwt_secret=_env_str("SUPABASE_JWT_SECRET", ""),
+        supabase_jwt_issuer=_env_str("SUPABASE_JWT_ISSUER", ""),
         anthropic_api_key=_env_str("ANTHROPIC_API_KEY", ""),
         supabase_url=_env_str("SUPABASE_URL", ""),
         supabase_service_key=_env_str("SUPABASE_SERVICE_ROLE_KEY", ""),

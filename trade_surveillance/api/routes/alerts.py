@@ -5,8 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from trade_surveillance.auth import get_current_user
 from trade_surveillance.crud import alerts as alerts_crud
 from trade_surveillance.db.session import get_db_session
+from trade_surveillance.models.user import User
 from trade_surveillance.schemas.alerts import AlertCreate, AlertRead, AlertUpdate
 from trade_surveillance.schemas.common import ErrorResponse, PaginatedResponse
 
@@ -25,7 +27,11 @@ ERROR_RESPONSES = {
     status_code=status.HTTP_201_CREATED,
     responses=ERROR_RESPONSES,
 )
-def create_alert(payload: AlertCreate, db: Session = Depends(get_db_session)) -> AlertRead:
+def create_alert(
+    payload: AlertCreate,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> AlertRead:
     return alerts_crud.create_alert(db, payload)
 
 
@@ -71,6 +77,7 @@ def update_alert(
     alert_id: UUID,
     payload: AlertUpdate,
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> AlertRead:
     alert = alerts_crud.get_alert(db, alert_id)
     if not alert:
@@ -84,7 +91,11 @@ def update_alert(
     response_class=Response,
     responses=ERROR_RESPONSES,
 )
-def delete_alert(alert_id: UUID, db: Session = Depends(get_db_session)) -> Response:
+def delete_alert(
+    alert_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> Response:
     alert = alerts_crud.get_alert(db, alert_id)
     if not alert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")

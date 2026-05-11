@@ -41,6 +41,11 @@ def update_user(db: Session, user: User, payload: UserUpdate) -> User:
     return user
 
 
+def get_user_by_supabase_uid(db: Session, supabase_uid: str) -> User | None:
+    stmt = select(User).where(User.supabase_uid == supabase_uid)
+    return db.scalars(stmt).one_or_none()
+
+
 def delete_user(db: Session, user: User) -> None:
     db.delete(user)
     db.commit()

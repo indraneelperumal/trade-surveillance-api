@@ -3,8 +3,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from trade_surveillance.auth import get_current_user
 from trade_surveillance.crud import metrics as metrics_crud
 from trade_surveillance.db.session import get_db_session
+from trade_surveillance.models.user import User
 from trade_surveillance.schemas.common import ErrorResponse
 from trade_surveillance.schemas.metrics import OverviewMetricsRead
 
@@ -18,5 +20,8 @@ ERROR_RESPONSES = {
 
 
 @router.get("/overview", response_model=OverviewMetricsRead, responses=ERROR_RESPONSES)
-def overview_metrics(db: Session = Depends(get_db_session)) -> OverviewMetricsRead:
+def overview_metrics(
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> OverviewMetricsRead:
     return metrics_crud.get_overview_metrics(db)

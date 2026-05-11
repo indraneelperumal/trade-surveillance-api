@@ -15,8 +15,14 @@ from trade_surveillance.schemas.investigation_notes import (
 def create_investigation_note(
     db: Session,
     payload: InvestigationNoteCreate,
+    *,
+    author_id: UUID | None = None,
 ) -> InvestigationNote:
-    note = InvestigationNote(**payload.model_dump(exclude_unset=True))
+    data = payload.model_dump(exclude_unset=True)
+    # author_id is server-controlled; the schema intentionally omits it from input.
+    if author_id is not None:
+        data["author_id"] = author_id
+    note = InvestigationNote(**data)
     db.add(note)
     db.commit()
     db.refresh(note)

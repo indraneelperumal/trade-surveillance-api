@@ -11,15 +11,14 @@ class InvestigationNoteCreate(BaseModel):
     investigation_id: UUID | None = None
     note_type: str = "COMMENT"
     content: str
-    author_id: UUID | None = None
+    # author_id is intentionally excluded — the server sets it from the JWT.
     is_system: bool = False
 
 
 class InvestigationNoteUpdate(BaseModel):
     note_type: str | None = None
     content: str | None = None
-    author_id: UUID | None = None
-    is_system: bool | None = None
+    # author_id cannot be changed after creation — attribution must not be forgeable.
 
 
 class InvestigationNoteRead(BaseModel):

@@ -8,9 +8,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from sqlalchemy.orm import Session
 
 from trade_surveillance.agents.orchestrator import investigate_trade
+from trade_surveillance.auth import get_current_user
 from trade_surveillance.crud import alerts as alerts_crud
 from trade_surveillance.crud import investigations as investigations_crud
 from trade_surveillance.db.session import get_db_session
+from trade_surveillance.models.user import User
 from trade_surveillance.schemas.common import ErrorResponse, PaginatedResponse
 from trade_surveillance.schemas.investigations import (
     InvestigationCreate,
@@ -70,6 +72,7 @@ def trigger_investigation(
     alert_id: UUID,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> dict:
     # Guard 1 — API key must be present before we accept the request.
     # Fail fast here rather than 10 seconds into the background task.
@@ -135,6 +138,7 @@ def trigger_investigation(
 def create_investigation(
     payload: InvestigationCreate,
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> InvestigationRead:
     return investigations_crud.create_investigation(db, payload)
 
@@ -169,6 +173,7 @@ def update_investigation(
     investigation_id: UUID,
     payload: InvestigationUpdate,
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> InvestigationRead:
     record = investigations_crud.get_investigation(db, investigation_id)
     if not record:
@@ -182,7 +187,11 @@ def update_investigation(
     response_class=Response,
     responses=ERROR_RESPONSES,
 )
-def delete_investigation(investigation_id: UUID, db: Session = Depends(get_db_session)) -> Response:
+def delete_investigation(
+    investigation_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> Response:
     record = investigations_crud.get_investigation(db, investigation_id)
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found")

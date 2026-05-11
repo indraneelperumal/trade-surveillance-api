@@ -5,8 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from trade_surveillance.auth import get_current_user, require_compliance_lead
 from trade_surveillance.crud import model_runs as model_runs_crud
 from trade_surveillance.db.session import get_db_session
+from trade_surveillance.models.user import User
 from trade_surveillance.schemas.common import ErrorResponse, PaginatedResponse
 from trade_surveillance.schemas.model_runs import ModelRunCreate, ModelRunRead, ModelRunUpdate
 
@@ -25,7 +27,11 @@ ERROR_RESPONSES = {
     status_code=status.HTTP_201_CREATED,
     responses=ERROR_RESPONSES,
 )
-def create_model_run(payload: ModelRunCreate, db: Session = Depends(get_db_session)) -> ModelRunRead:
+def create_model_run(
+    payload: ModelRunCreate,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
+) -> ModelRunRead:
     return model_runs_crud.create_model_run(db, payload)
 
 
@@ -34,6 +40,7 @@ def list_model_runs(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> PaginatedResponse[ModelRunRead]:
     items = model_runs_crud.list_model_runs(db, offset=offset, limit=limit)
     total = model_runs_crud.count_model_runs(db)
@@ -41,7 +48,11 @@ def list_model_runs(
 
 
 @router.get("/{model_run_id}", response_model=ModelRunRead, responses=ERROR_RESPONSES)
-def get_model_run(model_run_id: UUID, db: Session = Depends(get_db_session)) -> ModelRunRead:
+def get_model_run(
+    model_run_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> ModelRunRead:
     model_run = model_runs_crud.get_model_run(db, model_run_id)
     if not model_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model run not found")
@@ -53,6 +64,7 @@ def update_model_run(
     model_run_id: UUID,
     payload: ModelRunUpdate,
     db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
 ) -> ModelRunRead:
     model_run = model_runs_crud.get_model_run(db, model_run_id)
     if not model_run:
@@ -66,7 +78,11 @@ def update_model_run(
     response_class=Response,
     responses=ERROR_RESPONSES,
 )
-def delete_model_run(model_run_id: UUID, db: Session = Depends(get_db_session)) -> Response:
+def delete_model_run(
+    model_run_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
+) -> Response:
     model_run = model_runs_crud.get_model_run(db, model_run_id)
     if not model_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model run not found")

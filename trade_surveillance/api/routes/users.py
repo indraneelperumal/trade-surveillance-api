@@ -5,8 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from trade_surveillance.auth import get_current_user, require_compliance_lead
 from trade_surveillance.crud import users as users_crud
 from trade_surveillance.db.session import get_db_session
+from trade_surveillance.models.user import User
 from trade_surveillance.schemas.common import ErrorResponse, PaginatedResponse
 from trade_surveillance.schemas.users import UserCreate, UserRead, UserUpdate
 
@@ -19,13 +21,23 @@ ERROR_RESPONSES = {
 }
 
 
+@router.get("/me", response_model=UserRead, responses=ERROR_RESPONSES)
+def get_me(current_user: User = Depends(get_current_user)) -> UserRead:
+    """Returns the app-level profile of the currently authenticated user."""
+    return current_user
+
+
 @router.post(
     "",
     response_model=UserRead,
     status_code=status.HTTP_201_CREATED,
     responses=ERROR_RESPONSES,
 )
-def create_user(payload: UserCreate, db: Session = Depends(get_db_session)) -> UserRead:
+def create_user(
+    payload: UserCreate,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
+) -> UserRead:
     return users_crud.create_user(db, payload)
 
 
@@ -34,6 +46,7 @@ def list_users(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=500),
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> PaginatedResponse[UserRead]:
     items = users_crud.list_users(db, offset=offset, limit=limit)
     total = users_crud.count_users(db)
@@ -41,7 +54,11 @@ def list_users(
 
 
 @router.get("/{user_id}", response_model=UserRead, responses=ERROR_RESPONSES)
-def get_user(user_id: UUID, db: Session = Depends(get_db_session)) -> UserRead:
+def get_user(
+    user_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> UserRead:
     user = users_crud.get_user(db, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -53,6 +70,7 @@ def update_user(
     user_id: UUID,
     payload: UserUpdate,
     db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
 ) -> UserRead:
     user = users_crud.get_user(db, user_id)
     if not user:
@@ -66,7 +84,11 @@ def update_user(
     response_class=Response,
     responses=ERROR_RESPONSES,
 )
-def delete_user(user_id: UUID, db: Session = Depends(get_db_session)) -> Response:
+def delete_user(
+    user_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
+) -> Response:
     user = users_crud.get_user(db, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")

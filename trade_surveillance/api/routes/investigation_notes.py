@@ -5,8 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from trade_surveillance.auth import get_current_user
 from trade_surveillance.crud import investigation_notes as notes_crud
 from trade_surveillance.db.session import get_db_session
+from trade_surveillance.models.user import User
 from trade_surveillance.schemas.common import ErrorResponse, PaginatedResponse
 from trade_surveillance.schemas.investigation_notes import (
     InvestigationNoteCreate,
@@ -32,8 +34,10 @@ ERROR_RESPONSES = {
 def create_investigation_note(
     payload: InvestigationNoteCreate,
     db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_user),
 ) -> InvestigationNoteRead:
-    return notes_crud.create_investigation_note(db, payload)
+    # Server-sets author_id so attribution cannot be forged by the caller.
+    return notes_crud.create_investigation_note(db, payload, author_id=current_user.id)
 
 
 @router.get("", response_model=PaginatedResponse[InvestigationNoteRead], responses=ERROR_RESPONSES)
@@ -72,6 +76,7 @@ def update_investigation_note(
     note_id: UUID,
     payload: InvestigationNoteUpdate,
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> InvestigationNoteRead:
     note = notes_crud.get_investigation_note(db, note_id)
     if not note:
@@ -85,7 +90,11 @@ def update_investigation_note(
     response_class=Response,
     responses=ERROR_RESPONSES,
 )
-def delete_investigation_note(note_id: UUID, db: Session = Depends(get_db_session)) -> Response:
+def delete_investigation_note(
+    note_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> Response:
     note = notes_crud.get_investigation_note(db, note_id)
     if not note:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Investigation note not found")

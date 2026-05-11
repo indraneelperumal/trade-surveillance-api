@@ -5,8 +5,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from trade_surveillance.auth import get_current_user, require_compliance_lead
 from trade_surveillance.crud import trades as trades_crud
 from trade_surveillance.db.session import get_db_session
+from trade_surveillance.models.user import User
 from trade_surveillance.schemas.common import ErrorResponse, PaginatedResponse
 from trade_surveillance.schemas.trades import TradeCreate, TradeRead, TradeUpdate
 
@@ -25,7 +27,11 @@ ERROR_RESPONSES = {
     status_code=status.HTTP_201_CREATED,
     responses=ERROR_RESPONSES,
 )
-def create_trade(payload: TradeCreate, db: Session = Depends(get_db_session)) -> TradeRead:
+def create_trade(
+    payload: TradeCreate,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
+) -> TradeRead:
     return trades_crud.create_trade(db, payload)
 
 
@@ -35,6 +41,7 @@ def list_trades(
     limit: int = Query(default=50, ge=1, le=500),
     symbol: str | None = Query(default=None),
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> PaginatedResponse[TradeRead]:
     items = trades_crud.list_trades(db, offset=offset, limit=limit, symbol=symbol)
     total = trades_crud.count_trades(db, symbol=symbol)
@@ -42,7 +49,11 @@ def list_trades(
 
 
 @router.get("/{trade_id}", response_model=TradeRead, responses=ERROR_RESPONSES)
-def get_trade(trade_id: UUID, db: Session = Depends(get_db_session)) -> TradeRead:
+def get_trade(
+    trade_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> TradeRead:
     trade = trades_crud.get_trade(db, trade_id)
     if not trade:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade not found")
@@ -54,6 +65,7 @@ def update_trade(
     trade_id: UUID,
     payload: TradeUpdate,
     db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
 ) -> TradeRead:
     trade = trades_crud.get_trade(db, trade_id)
     if not trade:
@@ -67,7 +79,11 @@ def update_trade(
     response_class=Response,
     responses=ERROR_RESPONSES,
 )
-def delete_trade(trade_id: UUID, db: Session = Depends(get_db_session)) -> Response:
+def delete_trade(
+    trade_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(require_compliance_lead),
+) -> Response:
     trade = trades_crud.get_trade(db, trade_id)
     if not trade:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade not found")
