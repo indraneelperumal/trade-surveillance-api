@@ -129,6 +129,18 @@ def run_migrations(conn: Connection) -> None:
     )
 
 
+    # Phase 3 — alert close workflow
+    #
+    # alerts.disposition was VARCHAR(20) which is too short for
+    # ESCALATED_TO_REGULATOR (22 chars). Widen to VARCHAR(50).
+    conn.execute(
+        text(
+            "ALTER TABLE alerts "
+            "ALTER COLUMN disposition TYPE VARCHAR(50) USING disposition::VARCHAR(50)"
+        )
+    )
+
+
 def create_tables_and_migrate() -> None:
     engine = get_engine()
     create_tables(engine)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, Float, Boolean, ForeignKey, Index, Text
+from sqlalchemy import String, Float, ForeignKey, Index, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, TIMESTAMP, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -40,7 +40,8 @@ class Alert(Base):
 
     severity: Mapped[str] = mapped_column(String(10), default="MEDIUM")
     status: Mapped[str] = mapped_column(String(20), default="OPEN")
-    disposition: Mapped[str | None] = mapped_column(String(20))
+    # String(50) — longest value is ESCALATED_TO_REGULATOR (22 chars)
+    disposition: Mapped[str | None] = mapped_column(String(50))
 
     assigned_to: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
     reviewed_by: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.id"))

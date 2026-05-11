@@ -1,0 +1,22 @@
+---
+description: Prevents the agent from making git commits or pushes without explicit user instruction
+alwaysApply: true
+---
+
+# Git Commit Policy
+
+NEVER run `git commit`, `git push`, or any destructive git command unless the user **explicitly** asks you to commit or push in that message.
+
+- Writing and editing code is fine — do it freely.
+- Staging files (`git add`) is fine as preparation when asked to commit.
+- But do NOT commit or push on your own as a side-effect of fixing a bug or implementing a feature.
+
+## When the user asks to commit
+
+Ask for confirmation of the commit message if unclear. Use the `-m` flag always:
+
+```bash
+git commit -m "your message here"
+```
+
+Never open an interactive editor for commits.
