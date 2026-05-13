@@ -250,13 +250,12 @@ Memo schema (Claude Haiku output):
 
 ## Frontend Guidance
 
-- Frontend lives in a **separate Next.js repo** (`surveillance-web`). Keep it out of this repo.
-- Next.js App Router + TypeScript + TanStack Query + shadcn/ui.
-- Set `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000` in the frontend `.env`.
+- Frontend lives in a **separate Next.js repo** (`trade-surveillance-web`). Keep it out of this repo.
+- Next.js App Router + TypeScript + TanStack Query; set `NEXT_PUBLIC_API_BASE_URL` in the frontend `.env`.
 - Frontend consumes backend APIs only — never direct DB access.
 - All list endpoints are paginated. All errors use the normalized envelope: `{ error: { code, message, details } }`.
-- Authentication is handled by Supabase Auth. This API trusts the caller; add middleware for token validation when ready.
-- See `frontend-build-context.md` for full frontend IA, UX notes, and backlog.
+- Authentication: Supabase Auth in the browser; this API validates JWTs when `SUPABASE_JWT_SECRET` is set (see `trade_surveillance/auth.py`).
+- Product overview and current UI scope: see the **frontend repo `README.md`** (not maintained in this API repo).
 
 ## Product Goals (MVP)
 

@@ -1,110 +1,106 @@
-# Trade Surveillance API Backend
+# Trade Surveillance API (Sentinel backend)
 
-This repository is the backend/ML side of the MVP.  
-Target architecture (from `trade-surveillance-mvp-stack.md`):
+FastAPI service for **trade surveillance**: REST API over **Supabase PostgreSQL**, optional **Supabase Storage** for ML artefacts, **Supabase JWT** validation for authenticated routes, and an **async AI investigation** path (Anthropic) for compliance memos.
 
-- Frontend: separate Next.js repo (`surveillance-web`)
-- Backend: this Python repo (`surveillance-api`)
-- Data/Auth/Storage: Supabase (Postgres, Auth, Storage)
+The **Next.js** UI lives in a separate repo (`trade-surveillance-web`).
 
-The Streamlit dashboard is intentionally removed from this repo so the UI can live only in the Next.js app.
+---
+
+## Architecture overview
+
+```
+mock_data_script.py  →  Postgres (trades, dimensions, …)
+        ↓
+trade_surveillance.pipelines.feature_engineering  →  Supabase Storage (features.parquet)
+        ↓
+trade_surveillance.pipelines.anomaly_model       →  alerts + model_runs + Storage (model, medians)
+        ↓
+FastAPI /api/v1/*  ←  Next.js (JWT) — alerts, trades, notes, investigations, metrics, users
+        ↓
+POST /api/v1/investigations/run/{alert_id}  →  BackgroundTasks → investigate_trade() → investigations row
+```
+
+- **No AWS** in the current MVP path: storage and DB are Supabase-aligned.
+- **Live streaming simulator** (`live_simulate.py`) was removed; bulk seeding remains via `mock_data_script.py`.
+
+---
+
+## Current backend state (development)
+
+| Area | Status |
+|------|--------|
+| **REST API** | `/api/v1` trades, alerts, investigations, notes, model-runs, users, metrics/overview |
+| **Auth** | `SUPABASE_JWT_SECRET` (+ optional `SUPABASE_JWT_ISSUER`); `get_current_user`; `require_compliance_lead` for sensitive user mutations |
+| **Alerts** | Create/list/get/patch/delete; **COMPLIANCE_LEAD** only for terminal statuses `CLOSED` / `ESCALATED`; disposition required on close; server-stamped `reviewed_by` / `reviewed_at` |
+| **Investigation notes** | `author_id` set server-side from JWT |
+| **Agent** | `POST …/investigations/run/{alert_id}` queues `investigate_trade(alert_id)`; reads context from Postgres (`tools_db`); writes `investigations`; model via `ANTHROPIC_MODEL` |
+| **Migrations** | `trade_surveillance/db/migrator.py` — idempotent DDL (e.g. `rule_violated` TEXT, `disposition` width, ML columns on alerts) |
+| **Docker** | `pip install ".[agents]"` so Render image includes Anthropic/LangGraph stack |
+
+---
 
 ## Setup
-
-Dependencies are declared in **`pyproject.toml`** (setuptools / PEP 621 — this repo does not use Poetry).
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev,all]"   # full repo (API + pipelines + agents + pytest/ruff)
+pip install -e ".[dev,all]"   # or ".[dev]" for API-only, ".[dev,agents]" for API + agent deps
 cp .env.example .env
 ```
 
-Optional extras in `pyproject.toml`: **`pipelines`**, **`agents`**, **`all`**, **`dev`**. For a minimal API-only venv use `pip install -e ".[dev]"` (no pandas/S3/agents). Docker images use `pip install .` (API only).
-
-## Current Backend Scope
-
-| Path | Role |
-|------|------|
-| `trade_surveillance/` | Installable Python package |
-| `trade_surveillance/pipelines/` | Feature engineering + anomaly model jobs |
-| `trade_surveillance/agents/` | Investigation orchestration + memo generation |
-| `tests/` | Pytest |
-
-## Key Commands
+Fill `.env`: at minimum **`DATABASE_URL`**. For production auth: **`SUPABASE_JWT_SECRET`**. For investigations: **`ANTHROPIC_API_KEY`**. For pipelines + Storage: **`SUPABASE_URL`**, **`SUPABASE_SERVICE_ROLE_KEY`**, bucket keys — see `.env.example`.
 
 ```bash
 uvicorn trade_surveillance.api.main:app --reload --port 8000
-# Pipelines require: pip install -e ".[pipelines]" or ".[all]"
+```
+
+Health: `GET /health` and `GET /api/v1/health`.
+
+---
+
+## Demo data
+
+One-shot synthetic load (defaults to large batch; tune with env vars):
+
+```bash
+OUTPUT_TARGET=database python mock_data_script.py
+# NUM_TRADES=5000 OUTPUT_TARGET=database python mock_data_script.py
+```
+
+Ensure **`users`** rows exist with **`supabase_uid`** matching each Supabase Auth user so JWT login maps to app roles.
+
+---
+
+## ML pipelines (optional local / cron)
+
+```bash
+pip install -e ".[pipelines]"   # or ".[all]"
 python -m trade_surveillance.pipelines.feature_engineering
 python -m trade_surveillance.pipelines.anomaly_model
 ```
 
-On API startup, `AUTO_MIGRATE_ON_STARTUP` (default `true`) runs `create_tables_and_migrate()` — see [`trade_surveillance/db/migrator.py`](trade_surveillance/db/migrator.py).
+---
 
-## Demo data (Phase 2) — `mock_data_script.py` + `live_simulate.py`
+## Deploy (Render + Supabase)
 
-Both use **`DATABASE_URL`** (same as the API). Reference + dimension seeding lives in **[`mock_data_script.py`](mock_data_script.py)** (enterprise-style synthetic trades, anomaly shaping, GBM prices).
+1. **Supabase:** Postgres + Auth + (optional) Storage bucket for artefacts.  
+2. **Render (or similar):** Build from repo **`Dockerfile`**; set `DATABASE_URL`, `ALLOWED_ORIGINS`, `SUPABASE_JWT_SECRET`, `ANTHROPIC_API_KEY`, and Storage vars if pipelines write to bucket.  
+3. **Frontend:** Point `NEXT_PUBLIC_API_BASE_URL` at this service; allow the Vercel origin in `ALLOWED_ORIGINS`.
 
-**One-time backfill (default ~200k rows, batched):**
+---
 
-```bash
-cd trade-surveillance-api && source .venv/bin/activate
-cp .env.example .env   # ensure DATABASE_URL is set
-OUTPUT_TARGET=database python mock_data_script.py
-# Optional env: NUM_TRADES, DB_BATCH_SIZE, ANOMALY_RATE, EXT_HOURS_PCT, OTC_PCT
-```
+## Programmatic investigation (CLI / scripts)
 
-**Live simulator** (same row generator + `INSERT`; timestamps clustered near **now** for streaming demos):
-
-```bash
-python live_simulate.py --batch-size 75
-python live_simulate.py --batch-size 75 --interval-sec 180   # loop every 3 minutes
-```
-
-**Render Cron:** e.g. every 5 minutes, from repo root with venv / `pip install -e .` and `DATABASE_URL`:
-
-`python live_simulate.py --batch-size 75`
-
-You do **not** need a second seed script — use **`mock_data_script.py`** only for bulk load; **`live_simulate.py`** for ongoing ticks.
-
-**Next after seed:** Phase 3–4 (train + score workers) will consume these rows.
-
-## Deploy (Phase 0) — Render + Vercel
-
-1. **Supabase:** Create a project; copy a **pooler** `DATABASE_URL` — Session mode (5432) or Transaction mode (6543); the app configures psycopg for 6543 automatically (see [`.env.example`](.env.example)).
-2. **This API on Render:** New **Web Service** → connect this repo → **Docker** using the repo-root [`Dockerfile`](Dockerfile) (or Native: build `pip install .`, start `uvicorn trade_surveillance.api.main:app --host 0.0.0.0 --port $PORT`). Optional: deploy from [`render.yaml`](render.yaml) as a [Render Blueprint](https://render.com/docs/blueprint-spec). Copy-paste backups of the same snippets live in [docs/phase-0-deploy-artifacts.md](docs/phase-0-deploy-artifacts.md).
-3. **Environment variables on Render:** Set at least `DATABASE_URL`, `ALLOWED_ORIGINS` (include your Vercel production URL and `http://localhost:3000` for local UI). Optional: `ANTHROPIC_API_KEY`, `SUPABASE_*` for Storage (later phases).
-4. **Health check:** Render should use path **`/health`** (root health endpoint).
-5. **Frontend on Vercel:** In the Next.js repo, set `NEXT_PUBLIC_API_BASE_URL` to your Render service URL (no trailing slash). Ensure `ALLOWED_ORIGINS` on the API includes that Vercel origin so the browser is not blocked by CORS.
-
-**Docker (optional local):** From repo root, after adding `Dockerfile` and `.dockerignore` (see [docs/phase-0-deploy-artifacts.md](docs/phase-0-deploy-artifacts.md)):
-
-```bash
-cp .env.example .env
-docker build -t trade-surveillance-api .
-docker run --rm -p 8000:8000 --env-file .env trade-surveillance-api
-```
-
-**Worker (later):** Phase 5 adds `python -m trade_surveillance.worker score-batch`. Until then, skip a second Render service (see commented worker block in the Blueprint snippet in [docs/phase-0-deploy-artifacts.md](docs/phase-0-deploy-artifacts.md)).
-
-Programmatic investigation (requires `pip install -e ".[agents]"` or `.[all]`):
+Requires `pip install -e ".[agents]"` and env keys:
 
 ```python
 from trade_surveillance import investigate_trade
-
-result = investigate_trade("TRADE_ID_HERE", auto_approve=True)
-print(result["verdict"], result.get("compliance_memo"))
+result = investigate_trade("<alert-uuid>", auto_approve=True)
 ```
 
-## Next Steps (MVP Execution)
+---
 
-1. Build the Next.js frontend in a separate empty repo (`surveillance-web`) and keep it API-only (no direct DB access initially).
-2. Add FastAPI endpoints in this repo for:
-   - alert list
-   - alert detail
-   - disposition updates
-   - investigation notes/audit trail
-3. Move storage of queryable state to Supabase Postgres tables (`trades_raw`, `trade_features`, `alerts`, `investigations`, `investigation_notes`, `model_runs`).
-4. Keep large artifacts (memo JSON, optional model files) in Supabase Storage.
-5. Add scheduled backend jobs for feature/scoring runs, then have Next.js consume only backend API responses.
+## Further reading
+
+- **`trade-surveillance-mvp-stack.md`** — original stack choices (Supabase vs heavy AWS).  
+- **`CLAUDE.md`** — commands and route table for agents / local dev.
