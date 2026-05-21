@@ -8,6 +8,8 @@ from functools import lru_cache
 
 from dotenv import load_dotenv
 
+from trade_surveillance.supabase_project import project_ref_from_database_url, supabase_api_url
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -54,16 +56,28 @@ def _env_bool(name: str, default: bool) -> bool:
 @lru_cache
 def get_settings() -> Settings:
     load_dotenv()
+    database_url = _env_str("DATABASE_URL", "")
+
+    supabase_url = _env_str("SUPABASE_URL", "")
+    if not supabase_url:
+        ref = project_ref_from_database_url(database_url)
+        if ref:
+            supabase_url = supabase_api_url(ref)
+
+    jwt_issuer = _env_str("SUPABASE_JWT_ISSUER", "")
+    if not jwt_issuer and supabase_url:
+        jwt_issuer = f"{supabase_url.rstrip('/')}/auth/v1"
+
     return Settings(
         app_env=_env_str("APP_ENV", "development"),
         allowed_origins=_env_str("ALLOWED_ORIGINS", "http://localhost:3000"),
         auto_migrate_on_startup=_env_bool("AUTO_MIGRATE_ON_STARTUP", True),
-        database_url=_env_str("DATABASE_URL", ""),
+        database_url=database_url,
         supabase_anon_key=_env_str("SUPABASE_ANON_KEY", ""),
         supabase_jwt_secret=_env_str("SUPABASE_JWT_SECRET", ""),
-        supabase_jwt_issuer=_env_str("SUPABASE_JWT_ISSUER", ""),
+        supabase_jwt_issuer=jwt_issuer,
         anthropic_api_key=_env_str("ANTHROPIC_API_KEY", ""),
-        supabase_url=_env_str("SUPABASE_URL", ""),
+        supabase_url=supabase_url,
         supabase_service_key=_env_str("SUPABASE_SERVICE_ROLE_KEY", ""),
         storage_bucket=_env_str("SUPABASE_STORAGE_BUCKET", "trade-surveillance-artifacts"),
         features_key=_env_str("SUPABASE_FEATURES_KEY", "features/features.parquet"),

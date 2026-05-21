@@ -18,9 +18,8 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
         optional: true
-      - key: SUPABASE_URL
+      - key: SUPABASE_JWT_SECRET
         sync: false
-        optional: true
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
         optional: true

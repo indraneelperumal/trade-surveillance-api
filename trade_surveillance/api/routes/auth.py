@@ -72,7 +72,10 @@ def login(payload: AuthLoginRequest) -> AuthTokenResponse:
     if not settings.supabase_url:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="SUPABASE_URL is not configured on this server.",
+            detail=(
+                "Supabase project URL could not be resolved. Set SUPABASE_URL or use a "
+                "Supabase DATABASE_URL (postgres.<project-ref> user)."
+            ),
         )
     try:
         session = sign_in_with_password(settings, str(payload.email), payload.password)
