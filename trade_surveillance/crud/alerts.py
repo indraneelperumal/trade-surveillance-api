@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+
+from trade_surveillance.domain.enums import (
+    ALERT_PENDING_OFFICER_REVIEW,
+    OPEN_WORK_STATUSES,
+    STALE_HOURS,
+)
 
 from trade_surveillance.models.alert import Alert
 from trade_surveillance.models.trade import Trade
@@ -15,7 +22,12 @@ def _normalize_create_payload(payload: AlertCreate) -> dict:
     data = payload.model_dump()
     if isinstance(data.get("status"), str):
         s = data["status"].strip().lower().replace("-", "_")
-        sm = {"open": "OPEN", "closed": "CLOSED", "in_progress": "IN_PROGRESS"}
+        sm = {
+            "open": "OPEN",
+            "closed": "CLOSED",
+            "in_progress": "IN_PROGRESS",
+            "pending_officer_review": ALERT_PENDING_OFFICER_REVIEW,
+        }
         if s in sm:
             data["status"] = sm[s]
     if isinstance(data.get("severity"), str):
@@ -77,7 +89,13 @@ def _apply_list_filters(
     severity: str | None,
     symbol: str | None,
     anomaly_type: str | None,
+    assigned_to: UUID | None = None,
+    unassigned: bool = False,
+    stale: bool = False,
+    exclude_closed: bool = False,
 ):
+    if exclude_closed:
+        stmt = stmt.where(func.upper(Alert.status) != "CLOSED")
     if status:
         s = status.strip().lower().replace("-", "_")
         if s == "open":
@@ -91,6 +109,18 @@ def _apply_list_filters(
                     func.upper(Alert.status) == "IN-PROGRESS",
                 )
             )
+        elif s in ("pending_officer_review", "pending_officer"):
+            stmt = stmt.where(func.upper(Alert.status) == ALERT_PENDING_OFFICER_REVIEW)
+    if assigned_to:
+        stmt = stmt.where(Alert.assigned_to == assigned_to)
+    if unassigned:
+        stmt = stmt.where(Alert.assigned_to.is_(None))
+    if stale:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_HOURS)
+        stmt = stmt.where(
+            func.upper(Alert.status).in_(tuple(OPEN_WORK_STATUSES)),
+            Alert.updated_at < cutoff,
+        )
     if severity:
         sev = severity.strip().lower()
         sev_map = {
@@ -129,9 +159,23 @@ def list_alerts(
     severity: str | None = None,
     symbol: str | None = None,
     anomaly_type: str | None = None,
+    assigned_to: UUID | None = None,
+    unassigned: bool = False,
+    stale: bool = False,
+    exclude_closed: bool = False,
 ) -> list[AlertRead]:
     stmt = _alert_base_stmt()
-    stmt = _apply_list_filters(stmt, status=status, severity=severity, symbol=symbol, anomaly_type=anomaly_type)
+    stmt = _apply_list_filters(
+        stmt,
+        status=status,
+        severity=severity,
+        symbol=symbol,
+        anomaly_type=anomaly_type,
+        assigned_to=assigned_to,
+        unassigned=unassigned,
+        stale=stale,
+        exclude_closed=exclude_closed,
+    )
     stmt = stmt.order_by(Alert.created_at.desc()).offset(offset).limit(limit)
     rows = db.execute(stmt).all()
     return [_row_to_alert_read(r[0], r[1], r[2], r[3], r[4]) for r in rows]
@@ -144,9 +188,23 @@ def count_alerts(
     severity: str | None = None,
     symbol: str | None = None,
     anomaly_type: str | None = None,
+    assigned_to: UUID | None = None,
+    unassigned: bool = False,
+    stale: bool = False,
+    exclude_closed: bool = False,
 ) -> int:
     stmt = select(func.count()).select_from(Alert).join(Trade, Trade.trade_id == Alert.trade_id)
-    stmt = _apply_list_filters(stmt, status=status, severity=severity, symbol=symbol, anomaly_type=anomaly_type)
+    stmt = _apply_list_filters(
+        stmt,
+        status=status,
+        severity=severity,
+        symbol=symbol,
+        anomaly_type=anomaly_type,
+        assigned_to=assigned_to,
+        unassigned=unassigned,
+        stale=stale,
+        exclude_closed=exclude_closed,
+    )
     return int(db.scalar(stmt) or 0)
 
 

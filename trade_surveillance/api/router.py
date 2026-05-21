@@ -1,7 +1,9 @@
 from fastapi import APIRouter
 
 from trade_surveillance.api.routes.auth import router as auth_router
+from trade_surveillance.api.routes.alert_actions import router as alert_actions_router
 from trade_surveillance.api.routes.alerts import router as alerts_router
+from trade_surveillance.api.routes.cases import router as cases_router
 from trade_surveillance.api.routes.health import router as health_router
 from trade_surveillance.api.routes.market import router as market_router
 from trade_surveillance.api.routes.metrics import router as metrics_router
@@ -16,7 +18,9 @@ api_router.include_router(health_router, tags=["health"])
 api_router.include_router(auth_router, tags=["auth"])
 api_router.include_router(market_router, tags=["market"])
 api_router.include_router(trades_router, tags=["trades"])
+api_router.include_router(alert_actions_router, tags=["alerts"])
 api_router.include_router(alerts_router, tags=["alerts"])
+api_router.include_router(cases_router, tags=["cases"])
 api_router.include_router(investigations_router, tags=["investigations"])
 api_router.include_router(investigation_notes_router, tags=["investigation-notes"])
 api_router.include_router(model_runs_router, tags=["model-runs"])

@@ -25,6 +25,7 @@ class Investigation(Base):
     )
 
     verdict: Mapped[str] = mapped_column(String(20), nullable=False)
+    review_status: Mapped[str] = mapped_column(String(30), default="AI_COMPLETE", nullable=False)
     confidence: Mapped[str | None] = mapped_column(String(10))
     # Text (unbounded) — Claude's rule_violated values regularly exceed 50 chars.
     # String(50) caused silent truncation / StringDataRightTruncation errors.

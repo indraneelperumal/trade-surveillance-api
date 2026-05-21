@@ -15,6 +15,8 @@ class AuthRefreshRequest(BaseModel):
 class AuthUserInfo(BaseModel):
     id: str
     email: str
+    role: str = "ANALYST"
+    display_name: str | None = None
 
 
 class AuthTokenResponse(BaseModel):
@@ -22,4 +24,8 @@ class AuthTokenResponse(BaseModel):
     refresh_token: str
     expires_in: int
     token_type: str = "bearer"
+    user: AuthUserInfo
+
+
+class AuthSessionResponse(BaseModel):
     user: AuthUserInfo

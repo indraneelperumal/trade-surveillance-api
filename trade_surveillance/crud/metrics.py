@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from trade_surveillance.domain.enums import (
+    ALERT_PENDING_OFFICER_REVIEW,
+    OPEN_WORK_STATUSES,
+    STALE_HOURS,
+)
 from trade_surveillance.models.alert import Alert
 from trade_surveillance.models.trade import Trade
-from trade_surveillance.schemas.metrics import OverviewMetricsRead, SymbolAlertCount
+from trade_surveillance.models.user import User
+from trade_surveillance.schemas.metrics import AssigneeOpenCount, OverviewMetricsRead, SymbolAlertCount
 
 
 def _norm_status_key(raw: str | None) -> str:
@@ -20,6 +27,8 @@ def _norm_status_key(raw: str | None) -> str:
         return "closed"
     if s in ("IN_PROGRESS", "INPROGRESS"):
         return "in-progress"
+    if s == "PENDING_OFFICER_REVIEW":
+        return "pending-officer-review"
     return raw.strip().lower()
 
 
@@ -86,6 +95,61 @@ def get_overview_metrics(db: Session) -> OverviewMetricsRead:
     sym_rows = db.execute(sym_stmt).all()
     top_symbols = [SymbolAlertCount(symbol=row[0], count=int(row[1])) for row in sym_rows]
 
+    open_work = tuple(OPEN_WORK_STATUSES)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=STALE_HOURS)
+
+    open_unassigned_high = int(
+        db.scalar(
+            select(func.count())
+            .select_from(Alert)
+            .where(
+                func.upper(Alert.status).in_(open_work),
+                func.upper(Alert.severity) == "HIGH",
+                Alert.assigned_to.is_(None),
+            )
+        )
+        or 0
+    )
+
+    pending_officer = int(
+        db.scalar(
+            select(func.count())
+            .select_from(Alert)
+            .where(func.upper(Alert.status) == ALERT_PENDING_OFFICER_REVIEW)
+        )
+        or 0
+    )
+
+    stale_open = int(
+        db.scalar(
+            select(func.count())
+            .select_from(Alert)
+            .where(
+                func.upper(Alert.status).in_(open_work),
+                Alert.updated_at < cutoff,
+            )
+        )
+        or 0
+    )
+
+    assignee_rows = db.execute(
+        select(User.id, User.email, User.display_name, func.count(Alert.id))
+        .join(Alert, Alert.assigned_to == User.id)
+        .where(func.upper(Alert.status).in_(open_work))
+        .group_by(User.id, User.email, User.display_name)
+        .order_by(func.count(Alert.id).desc())
+        .limit(20)
+    ).all()
+    alerts_per_assignee = [
+        AssigneeOpenCount(
+            user_id=row[0],
+            email=row[1],
+            display_name=row[2],
+            open_count=int(row[3]),
+        )
+        for row in assignee_rows
+    ]
+
     return OverviewMetricsRead(
         total_alerts=total_alerts,
         total_trades=total_trades,
@@ -95,4 +159,9 @@ def get_overview_metrics(db: Session) -> OverviewMetricsRead:
         open_alerts_by_severity=dict(open_alerts_by_severity),
         open_high_severity_count=open_high,
         top_symbols_by_alerts=top_symbols,
+        open_unassigned_high=open_unassigned_high,
+        pending_officer_review=pending_officer,
+        stale_open_24h=stale_open,
+        sla_breach_count=stale_open,
+        alerts_per_assignee=alerts_per_assignee,
     )

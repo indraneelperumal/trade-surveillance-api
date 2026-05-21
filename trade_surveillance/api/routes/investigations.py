@@ -93,13 +93,16 @@ def trigger_investigation(
             detail=f"Alert {alert_id} not found.",
         )
 
-    # Guard 3 — Prevent a second agent run while one is already in progress.
-    if alert.status == "IN_PROGRESS":
+    # Guard 3 — One investigation per alert (v2).
+    existing = investigations_crud.list_investigations(
+        db, offset=0, limit=1, alert_id=alert_id
+    )
+    if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "An investigation is already in progress for this alert. "
-                "Poll GET /investigations?alert_id={} for the result.".format(alert_id)
+                "This case already has an investigation. "
+                f"Poll GET /api/v1/cases/{alert_id} for the result."
             ),
         )
 

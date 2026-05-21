@@ -140,6 +140,26 @@ def run_migrations(conn: Connection) -> None:
         )
     )
 
+    # Phase 4 — v2 case workflow
+    conn.execute(
+        text(
+            "ALTER TABLE investigations ADD COLUMN IF NOT EXISTS "
+            "review_status VARCHAR(30) NOT NULL DEFAULT 'AI_COMPLETE'"
+        )
+    )
+    conn.execute(
+        text(
+            "UPDATE alerts SET status = 'PENDING_OFFICER_REVIEW' "
+            "WHERE UPPER(status) = 'ESCALATED'"
+        )
+    )
+    conn.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_investigations_alert_id_unique "
+            "ON investigations (alert_id)"
+        )
+    )
+
 
 def create_tables_and_migrate() -> None:
     engine = get_engine()

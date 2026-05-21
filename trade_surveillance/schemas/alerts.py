@@ -61,7 +61,12 @@ class AlertUpdate(BaseModel):
         out = dict(data)
         if "status" in out and out["status"] is not None and isinstance(out["status"], str):
             s = out["status"].strip().lower().replace("-", "_")
-            mapping = {"open": "OPEN", "closed": "CLOSED", "in_progress": "IN_PROGRESS"}
+            mapping = {
+                "open": "OPEN",
+                "closed": "CLOSED",
+                "in_progress": "IN_PROGRESS",
+                "pending_officer_review": "PENDING_OFFICER_REVIEW",
+            }
             if s in mapping:
                 out["status"] = mapping[s]
         if "severity" in out and out["severity"] is not None and isinstance(out["severity"], str):

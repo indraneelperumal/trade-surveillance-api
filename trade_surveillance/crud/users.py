@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from trade_surveillance.domain.enums import DEMO_DISPLAY_NAMES, DEMO_USER_ROLES, ROLE_ANALYST
 from trade_surveillance.models.user import User
 from trade_surveillance.schemas.users import UserCreate, UserUpdate
 
@@ -53,6 +54,10 @@ def ensure_app_user(db: Session, *, supabase_uid: str, email: str) -> User:
     Creates ANALYST users on first login and re-activates inactive accounts so
     JWT auth succeeds after Supabase sign-in.
     """
+    email_key = email.strip().lower()
+    demo_role = DEMO_USER_ROLES.get(email_key)
+    demo_name = DEMO_DISPLAY_NAMES.get(email_key)
+
     user = get_user_by_supabase_uid(db, supabase_uid)
     if user:
         changed = False
@@ -62,6 +67,12 @@ def ensure_app_user(db: Session, *, supabase_uid: str, email: str) -> User:
         if email and user.email != email:
             user.email = email
             changed = True
+        if demo_role and user.role != demo_role:
+            user.role = demo_role
+            changed = True
+        if demo_name and user.display_name != demo_name:
+            user.display_name = demo_name
+            changed = True
         if changed:
             db.add(user)
             db.commit()
@@ -70,8 +81,8 @@ def ensure_app_user(db: Session, *, supabase_uid: str, email: str) -> User:
 
     user = User(
         email=email,
-        display_name=email.split("@")[0] if "@" in email else email,
-        role="ANALYST",
+        display_name=demo_name or (email.split("@")[0] if "@" in email else email),
+        role=demo_role or ROLE_ANALYST,
         is_active=True,
         supabase_uid=supabase_uid,
     )

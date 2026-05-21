@@ -13,7 +13,7 @@ from trade_surveillance.models.user import User
 from trade_surveillance.schemas.alerts import AlertCreate, AlertRead, AlertUpdate
 from trade_surveillance.schemas.common import ErrorResponse, PaginatedResponse
 
-_RESTRICTED_STATUSES = {"CLOSED", "ESCALATED"}
+_RESTRICTED_STATUSES = {"CLOSED", "PENDING_OFFICER_REVIEW"}
 
 router = APIRouter(prefix="/alerts")
 ERROR_RESPONSES = {
@@ -55,9 +55,25 @@ def list_alerts(
     severity: str | None = None,
     symbol: str | None = None,
     anomaly_type: str | None = Query(default=None, alias="anomalyType"),
+    assigned_to: str | None = Query(default=None, alias="assignedTo"),
+    unassigned: bool = Query(default=False),
+    stale: bool = Query(default=False),
+    exclude_closed: bool = Query(default=False, alias="excludeClosed"),
     db: Session = Depends(get_db_session),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> PaginatedResponse[AlertRead]:
+    assignee_id: UUID | None = None
+    if assigned_to:
+        if assigned_to.strip().lower() == "me":
+            assignee_id = current_user.id
+        else:
+            try:
+                assignee_id = UUID(assigned_to)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="assignedTo must be a UUID or 'me'.",
+                )
     items = alerts_crud.list_alerts(
         db,
         offset=offset,
@@ -66,6 +82,10 @@ def list_alerts(
         severity=severity,
         symbol=symbol,
         anomaly_type=anomaly_type,
+        assigned_to=assignee_id,
+        unassigned=unassigned,
+        stale=stale,
+        exclude_closed=exclude_closed,
     )
     total = alerts_crud.count_alerts(
         db,
@@ -73,6 +93,10 @@ def list_alerts(
         severity=severity,
         symbol=symbol,
         anomaly_type=anomaly_type,
+        assigned_to=assignee_id,
+        unassigned=unassigned,
+        stale=stale,
+        exclude_closed=exclude_closed,
     )
     return PaginatedResponse(items=items, total=total, offset=offset, limit=limit)
 

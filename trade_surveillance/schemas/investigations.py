@@ -49,6 +49,7 @@ class InvestigationRead(BaseModel):
     id: UUID
     alert_id: UUID
     verdict: str
+    review_status: str = "AI_COMPLETE"
     confidence: str | None
     rule_violated: str | None
     summary: str | None

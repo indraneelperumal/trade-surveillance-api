@@ -253,13 +253,13 @@ def _write_investigation_to_db(
             conn.execute(
                 text("""
                     INSERT INTO investigations (
-                        id, alert_id, verdict, confidence, rule_violated,
+                        id, alert_id, verdict, review_status, confidence, rule_violated,
                         summary, evidence_points, recommended_action, data_gaps,
                         memo_json, is_auto, model_version, error_message,
                         started_at, completed_at, created_at, updated_at
                     ) VALUES (
                         CAST(:id AS uuid), CAST(:alert_id AS uuid),
-                        :verdict, :confidence, :rule_violated,
+                        :verdict, 'AI_COMPLETE', :confidence, :rule_violated,
                         :summary, CAST(:evidence_points AS jsonb),
                         :recommended_action, :data_gaps,
                         CAST(:memo_json AS jsonb), TRUE,
