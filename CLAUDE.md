@@ -254,7 +254,7 @@ Memo schema (Claude Haiku output):
 - Next.js App Router + TypeScript + TanStack Query; set `NEXT_PUBLIC_API_BASE_URL` in the frontend `.env`.
 - Frontend consumes backend APIs only — never direct DB access.
 - All list endpoints are paginated. All errors use the normalized envelope: `{ error: { code, message, details } }`.
-- Authentication: `POST /api/v1/auth/login` proxies Supabase Auth (GoTrue) using `SUPABASE_SERVICE_ROLE_KEY`. `SUPABASE_URL` is auto-derived from `DATABASE_URL` (`postgres.<project-ref>`). Validate Bearer tokens with `SUPABASE_JWT_SECRET` (see `trade_surveillance/auth.py`).
+- Authentication: `POST /api/v1/auth/login` via `SUPABASE_SERVICE_ROLE_KEY`. Validate Bearer tokens with ES256/JWKS (`SUPABASE_URL`, auto-derived from `DATABASE_URL`) or legacy HS256 (`SUPABASE_JWT_SECRET`) — see `trade_surveillance/jwt_verify.py`.
 - Product overview and current UI scope: see the **frontend repo `README.md`** (not maintained in this API repo).
 
 ## Product Goals (MVP)

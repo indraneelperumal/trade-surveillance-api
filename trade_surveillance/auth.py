@@ -1,13 +1,11 @@
 """
 JWT-based auth dependency for FastAPI.
 
-Supabase Auth issues HS256 JWTs signed with the project JWT secret.
-`get_current_user` validates the token and returns the app-level User record.
+Supabase Auth issues access tokens as HS256 (legacy JWT secret) or ES256 (JWKS).
+`get_current_user` validates the Bearer token and returns the app-level User record.
 
-Dev bypass (APP_ENV=development only): when Supabase auth is not fully configured
-(no JWT secret, or no service role / anon key for GoTrue login), unauthenticated
-requests are allowed as a synthetic COMPLIANCE_LEAD user. Production always
-requires a valid Bearer JWT when SUPABASE_JWT_SECRET is set.
+Dev bypass (APP_ENV=development only): when auth is not fully configured,
+unauthenticated requests are allowed as a synthetic COMPLIANCE_LEAD user.
 """
 
 from __future__ import annotations
@@ -25,11 +23,11 @@ from trade_surveillance.auth_supabase import auth_api_key
 from trade_surveillance.config import get_settings
 from trade_surveillance.crud import users as users_crud
 from trade_surveillance.db.session import get_db_session
+from trade_surveillance.jwt_verify import decode_supabase_jwt, jwt_validation_available
 from trade_surveillance.models.user import User
 
 logger = logging.getLogger(__name__)
 
-# auto_error=False lets us provide a custom 401 and implement the dev bypass.
 _bearer = HTTPBearer(auto_error=False)
 
 
@@ -37,7 +35,7 @@ def _dev_bypass_active(settings) -> bool:
     """Match POST /auth/login dev stub — no GoTrue and/or no JWT validation."""
     if settings.app_env != "development":
         return False
-    if not settings.supabase_jwt_secret:
+    if not jwt_validation_available(settings):
         return True
     if not auth_api_key(settings):
         return True
@@ -68,16 +66,15 @@ def get_current_user(
 
     HTTP 401 — token missing, expired, or invalid.
     HTTP 403 — user not provisioned in the users table or account inactive.
-    HTTP 503 — JWT secret missing in a non-development environment (mis-config).
+    HTTP 503 — auth not configured in a non-development environment.
     """
     settings = get_settings()
-    jwt_secret = settings.supabase_jwt_secret
 
     if _dev_bypass_active(settings):
-        if not jwt_secret:
+        if not jwt_validation_available(settings):
             logger.warning(
-                "SUPABASE_JWT_SECRET not set in development — "
-                "JWT validation DISABLED. Never deploy without it."
+                "JWT validation not configured in development — "
+                "JWT validation DISABLED. Set SUPABASE_URL or SUPABASE_JWT_SECRET."
             )
         elif not auth_api_key(settings):
             logger.warning(
@@ -87,16 +84,16 @@ def get_current_user(
         if credentials is None:
             return _make_dev_user()
 
-    if not jwt_secret:
+    if not jwt_validation_available(settings):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Authentication is not configured on this server. "
-                "Set SUPABASE_JWT_SECRET in the environment variables."
+                "Set SUPABASE_URL (ES256) or SUPABASE_JWT_SECRET (HS256)."
             ),
         )
 
-    if credentials is None:
+    if credentials is None or not credentials.credentials.strip():
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing Authorization header. Include 'Bearer <token>'.",
@@ -104,24 +101,13 @@ def get_current_user(
         )
 
     try:
-        payload = jwt.decode(
-            credentials.credentials,
-            jwt_secret,
-            algorithms=["HS256"],
-            audience="authenticated",
-            issuer=settings.supabase_jwt_issuer or None,
-            options={
-                # Only validate issuer if we have one configured.
-                "verify_iss": bool(settings.supabase_jwt_issuer),
-            },
-        )
+        payload = decode_supabase_jwt(credentials.credentials.strip(), settings)
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired. Please sign in again.",
         )
     except jwt.InvalidTokenError:
-        # Avoid leaking internal JWT parse errors to callers.
         logger.debug("JWT validation failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -135,13 +121,14 @@ def get_current_user(
             detail="Token is missing the 'sub' claim.",
         )
 
-    user = users_crud.get_user_by_supabase_uid(db, supabase_uid)
+    user = users_crud.get_user_by_supabase_uid(db, str(supabase_uid))
     if not user:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "Authenticated but no app account found. "
-                "Ask an admin to provision your account in the users table."
+                "Ask an admin to provision your account in the users table "
+                f"(supabase_uid={supabase_uid})."
             ),
         )
     if not user.is_active:
@@ -154,10 +141,6 @@ def get_current_user(
 
 
 def require_compliance_lead(current_user: User = Depends(get_current_user)) -> User:
-    """
-    Role guard — only COMPLIANCE_LEAD accounts may call endpoints that use this.
-    Stack on top of get_current_user: Depends(require_compliance_lead).
-    """
     if current_user.role != "COMPLIANCE_LEAD":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
