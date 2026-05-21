@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from trade_surveillance.api.routes.auth import router as auth_router
 from trade_surveillance.api.routes.alerts import router as alerts_router
 from trade_surveillance.api.routes.health import router as health_router
 from trade_surveillance.api.routes.market import router as market_router
@@ -12,6 +13,7 @@ from trade_surveillance.api.routes.users import router as users_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(health_router, tags=["health"])
+api_router.include_router(auth_router, tags=["auth"])
 api_router.include_router(market_router, tags=["market"])
 api_router.include_router(trades_router, tags=["trades"])
 api_router.include_router(alerts_router, tags=["alerts"])

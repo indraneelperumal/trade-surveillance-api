@@ -18,6 +18,8 @@ class Settings:
     database_url: str
 
     # ── Auth ─────────────────────────────────────────────────────────────────
+    # Optional fallback for GoTrue HTTP login if service role key is unavailable.
+    supabase_anon_key: str
     # Supabase JWT secret — Project Settings → API → JWT Secret.
     # Leave empty to disable JWT validation (APP_ENV=development only).
     supabase_jwt_secret: str
@@ -57,6 +59,7 @@ def get_settings() -> Settings:
         allowed_origins=_env_str("ALLOWED_ORIGINS", "http://localhost:3000"),
         auto_migrate_on_startup=_env_bool("AUTO_MIGRATE_ON_STARTUP", True),
         database_url=_env_str("DATABASE_URL", ""),
+        supabase_anon_key=_env_str("SUPABASE_ANON_KEY", ""),
         supabase_jwt_secret=_env_str("SUPABASE_JWT_SECRET", ""),
         supabase_jwt_issuer=_env_str("SUPABASE_JWT_ISSUER", ""),
         anthropic_api_key=_env_str("ANTHROPIC_API_KEY", ""),
