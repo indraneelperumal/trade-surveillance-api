@@ -4,10 +4,10 @@ JWT-based auth dependency for FastAPI.
 Supabase Auth issues HS256 JWTs signed with the project JWT secret.
 `get_current_user` validates the token and returns the app-level User record.
 
-Dev bypass: if SUPABASE_JWT_SECRET is empty AND APP_ENV=development, validation
-is skipped and a synthetic COMPLIANCE_LEAD user is returned. In all other
-environments (staging, production) a missing secret is a hard error — the
-server will refuse to start rather than silently grant full access.
+Dev bypass (APP_ENV=development only): when Supabase auth is not fully configured
+(no JWT secret, or no service role / anon key for GoTrue login), unauthenticated
+requests are allowed as a synthetic COMPLIANCE_LEAD user. Production always
+requires a valid Bearer JWT when SUPABASE_JWT_SECRET is set.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from trade_surveillance.auth_supabase import auth_api_key
 from trade_surveillance.config import get_settings
 from trade_surveillance.crud import users as users_crud
 from trade_surveillance.db.session import get_db_session
@@ -30,7 +31,19 @@ logger = logging.getLogger(__name__)
 # auto_error=False lets us provide a custom 401 and implement the dev bypass.
 _bearer = HTTPBearer(auto_error=False)
 
-# Synthetic user returned only in APP_ENV=development with no JWT secret.
+
+def _dev_bypass_active(settings) -> bool:
+    """Match POST /auth/login dev stub — no GoTrue and/or no JWT validation."""
+    if settings.app_env != "development":
+        return False
+    if not settings.supabase_jwt_secret:
+        return True
+    if not auth_api_key(settings):
+        return True
+    return False
+
+
+# Synthetic user returned only when dev bypass is active.
 _DEV_USER = User(
     id=uuid4(),
     email="dev@localhost",
@@ -55,14 +68,21 @@ def get_current_user(
     settings = get_settings()
     jwt_secret = settings.supabase_jwt_secret
 
-    if not jwt_secret:
-        if settings.app_env == "development":
+    if _dev_bypass_active(settings):
+        if not jwt_secret:
             logger.warning(
                 "SUPABASE_JWT_SECRET not set in development — "
                 "JWT validation DISABLED. Never deploy without it."
             )
+        elif not auth_api_key(settings):
+            logger.warning(
+                "SUPABASE_SERVICE_ROLE_KEY not set in development — "
+                "API accepts unauthenticated requests as dev user."
+            )
+        if credentials is None:
             return _DEV_USER
-        # Any other environment (staging, production): fail closed.
+
+    if not jwt_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(

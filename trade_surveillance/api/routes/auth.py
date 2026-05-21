@@ -41,7 +41,7 @@ def _to_response(session) -> AuthTokenResponse:
 
 
 def _dev_login_response(email: str) -> AuthTokenResponse:
-    """Local dev when GoTrue credentials are not configured (API JWT bypass still applies)."""
+    """Local dev when GoTrue is not configured; paired with auth._dev_bypass_active()."""
     return AuthTokenResponse(
         access_token="",
         refresh_token="",
