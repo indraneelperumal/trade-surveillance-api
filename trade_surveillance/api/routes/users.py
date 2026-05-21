@@ -21,12 +21,6 @@ ERROR_RESPONSES = {
 }
 
 
-@router.get("/me", response_model=UserRead, responses=ERROR_RESPONSES)
-def get_me(current_user: User = Depends(get_current_user)) -> UserRead:
-    """Returns the app-level profile of the currently authenticated user."""
-    return current_user
-
-
 @router.post(
     "",
     response_model=UserRead,

@@ -13,6 +13,7 @@ requires a valid Bearer JWT when SUPABASE_JWT_SECRET is set.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import jwt
@@ -43,15 +44,19 @@ def _dev_bypass_active(settings) -> bool:
     return False
 
 
-# Synthetic user returned only when dev bypass is active.
-_DEV_USER = User(
-    id=uuid4(),
-    email="dev@localhost",
-    display_name="Dev (no auth)",
-    role="COMPLIANCE_LEAD",
-    is_active=True,
-    supabase_uid="__dev__",
-)
+def _make_dev_user() -> User:
+    """In-memory user for local dev when GoTrue / JWT is not fully configured."""
+    now = datetime.now(timezone.utc)
+    return User(
+        id=uuid4(),
+        email="dev@localhost",
+        display_name="Dev (no auth)",
+        role="COMPLIANCE_LEAD",
+        is_active=True,
+        supabase_uid="__dev__",
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def get_current_user(
@@ -80,7 +85,7 @@ def get_current_user(
                 "API accepts unauthenticated requests as dev user."
             )
         if credentials is None:
-            return _DEV_USER
+            return _make_dev_user()
 
     if not jwt_secret:
         raise HTTPException(
