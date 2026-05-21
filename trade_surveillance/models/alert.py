@@ -39,7 +39,8 @@ class Alert(Base):
     scoring_mode: Mapped[str | None] = mapped_column(String(32))
 
     severity: Mapped[str] = mapped_column(String(10), default="MEDIUM")
-    status: Mapped[str] = mapped_column(String(20), default="OPEN")
+    # String(30) — longest value is PENDING_OFFICER_REVIEW (22 chars)
+    status: Mapped[str] = mapped_column(String(30), default="OPEN")
     # String(50) — longest value is ESCALATED_TO_REGULATOR (22 chars)
     disposition: Mapped[str | None] = mapped_column(String(50))
 

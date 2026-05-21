@@ -141,6 +141,14 @@ def run_migrations(conn: Connection) -> None:
     )
 
     # Phase 4 — v2 case workflow
+    #
+    # alerts.status was VARCHAR(20); PENDING_OFFICER_REVIEW is 22 chars.
+    conn.execute(
+        text(
+            "ALTER TABLE alerts "
+            "ALTER COLUMN status TYPE VARCHAR(30) USING status::VARCHAR(30)"
+        )
+    )
     conn.execute(
         text(
             "ALTER TABLE investigations ADD COLUMN IF NOT EXISTS "
