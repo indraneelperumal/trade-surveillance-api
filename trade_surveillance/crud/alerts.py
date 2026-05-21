@@ -93,7 +93,13 @@ def _apply_list_filters(
             )
     if severity:
         sev = severity.strip().lower()
-        sev_map = {"high": "HIGH", "med": "MEDIUM", "low": "LOW", "none": "NONE"}
+        sev_map = {
+            "high": "HIGH",
+            "med": "MEDIUM",
+            "medium": "MEDIUM",
+            "low": "LOW",
+            "none": "NONE",
+        }
         if sev in sev_map:
             stmt = stmt.where(func.upper(Alert.severity) == sev_map[sev])
     if symbol:
@@ -177,4 +183,11 @@ def update_alert(db: Session, alert: Alert, payload: AlertUpdate) -> AlertRead:
 
 def delete_alert(db: Session, alert: Alert) -> None:
     db.delete(alert)
+    db.commit()
+
+
+def set_alert_status(db: Session, alert: Alert, status: str) -> None:
+    """Internal status transition (e.g. queue AI investigation)."""
+    alert.status = status
+    db.add(alert)
     db.commit()

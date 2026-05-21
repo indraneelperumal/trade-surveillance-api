@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
 from trade_surveillance.auth_supabase import (
     SupabaseAuthError,
@@ -11,6 +12,8 @@ from trade_surveillance.auth_supabase import (
     sign_in_with_password,
 )
 from trade_surveillance.config import get_settings
+from trade_surveillance.crud import users as users_crud
+from trade_surveillance.db.session import get_db_session
 from trade_surveillance.schemas.auth import (
     AuthLoginRequest,
     AuthRefreshRequest,
@@ -51,7 +54,10 @@ def _dev_login_response(email: str) -> AuthTokenResponse:
 
 
 @router.post("/login", response_model=AuthTokenResponse, responses=ERROR_RESPONSES)
-def login(payload: AuthLoginRequest) -> AuthTokenResponse:
+def login(
+    payload: AuthLoginRequest,
+    db: Session = Depends(get_db_session),
+) -> AuthTokenResponse:
     """
     Email/password sign-in via Supabase Auth (server-side).
 
@@ -81,11 +87,20 @@ def login(payload: AuthLoginRequest) -> AuthTokenResponse:
         session = sign_in_with_password(settings, str(payload.email), payload.password)
     except SupabaseAuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    users_crud.ensure_app_user(
+        db,
+        supabase_uid=session.user_id,
+        email=session.email,
+    )
     return _to_response(session)
 
 
 @router.post("/refresh", response_model=AuthTokenResponse, responses=ERROR_RESPONSES)
-def refresh_tokens(payload: AuthRefreshRequest) -> AuthTokenResponse:
+def refresh_tokens(
+    payload: AuthRefreshRequest,
+    db: Session = Depends(get_db_session),
+) -> AuthTokenResponse:
     settings = get_settings()
     if not auth_api_key(settings) or not settings.supabase_url:
         raise HTTPException(
@@ -96,4 +111,9 @@ def refresh_tokens(payload: AuthRefreshRequest) -> AuthTokenResponse:
         session = refresh_session(settings, payload.refresh_token)
     except SupabaseAuthError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    users_crud.ensure_app_user(
+        db,
+        supabase_uid=session.user_id,
+        email=session.email,
+    )
     return _to_response(session)

@@ -56,6 +56,7 @@ def list_alerts(
     symbol: str | None = None,
     anomaly_type: str | None = Query(default=None, alias="anomalyType"),
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> PaginatedResponse[AlertRead]:
     items = alerts_crud.list_alerts(
         db,
@@ -77,7 +78,11 @@ def list_alerts(
 
 
 @router.get("/{alert_id}", response_model=AlertRead, responses=ERROR_RESPONSES)
-def get_alert(alert_id: UUID, db: Session = Depends(get_db_session)) -> AlertRead:
+def get_alert(
+    alert_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> AlertRead:
     alert = alerts_crud.get_alert_read(db, alert_id)
     if not alert:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")

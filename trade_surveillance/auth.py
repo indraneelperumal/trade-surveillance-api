@@ -121,20 +121,26 @@ def get_current_user(
             detail="Token is missing the 'sub' claim.",
         )
 
+    email = str(payload.get("email") or "").strip()
     user = users_crud.get_user_by_supabase_uid(db, str(supabase_uid))
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Authenticated but no app account found. "
-                "Ask an admin to provision your account in the users table "
-                f"(supabase_uid={supabase_uid})."
-            ),
-        )
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is inactive. Contact an admin.",
+    if user is None or not user.is_active:
+        if not email:
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "Authenticated but no app account found. "
+                        "Sign out and sign in again, or ask an admin to provision your account."
+                    ),
+                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account is inactive. Contact an admin.",
+            )
+        user = users_crud.ensure_app_user(
+            db,
+            supabase_uid=str(supabase_uid),
+            email=email,
         )
 
     return user

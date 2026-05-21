@@ -46,6 +46,41 @@ def get_user_by_supabase_uid(db: Session, supabase_uid: str) -> User | None:
     return db.scalars(stmt).one_or_none()
 
 
+def ensure_app_user(db: Session, *, supabase_uid: str, email: str) -> User:
+    """
+    Provision or refresh the app user row for a Supabase Auth login.
+
+    Creates ANALYST users on first login and re-activates inactive accounts so
+    JWT auth succeeds after Supabase sign-in.
+    """
+    user = get_user_by_supabase_uid(db, supabase_uid)
+    if user:
+        changed = False
+        if not user.is_active:
+            user.is_active = True
+            changed = True
+        if email and user.email != email:
+            user.email = email
+            changed = True
+        if changed:
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        return user
+
+    user = User(
+        email=email,
+        display_name=email.split("@")[0] if "@" in email else email,
+        role="ANALYST",
+        is_active=True,
+        supabase_uid=supabase_uid,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def delete_user(db: Session, user: User) -> None:
     db.delete(user)
     db.commit()

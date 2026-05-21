@@ -113,9 +113,10 @@ def trigger_investigation(
             ),
         )
 
-    # All guards passed — fire the agent in the background and return 202.
-    # The orchestrator writes the investigation row and sets alert→IN_PROGRESS
-    # atomically when it completes.
+    # Mark in-progress immediately so duplicate triggers are rejected and the UI can poll.
+    if (alert.status or "").upper() == "OPEN":
+        alerts_crud.set_alert_status(db, alert, "IN_PROGRESS")
+
     background_tasks.add_task(_run_investigation_safe, str(alert_id))
 
     return {
@@ -149,6 +150,7 @@ def list_investigations(
     limit: int = Query(default=50, ge=1, le=500),
     alert_id: UUID | None = Query(default=None),
     db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
 ) -> PaginatedResponse[InvestigationRead]:
     items = investigations_crud.list_investigations(
         db,
@@ -161,7 +163,11 @@ def list_investigations(
 
 
 @router.get("/{investigation_id}", response_model=InvestigationRead, responses=ERROR_RESPONSES)
-def get_investigation(investigation_id: UUID, db: Session = Depends(get_db_session)) -> InvestigationRead:
+def get_investigation(
+    investigation_id: UUID,
+    db: Session = Depends(get_db_session),
+    _: User = Depends(get_current_user),
+) -> InvestigationRead:
     record = investigations_crud.get_investigation(db, investigation_id)
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found")
