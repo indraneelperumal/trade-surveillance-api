@@ -255,7 +255,7 @@ Memo schema (Claude Haiku output):
 - Frontend consumes backend APIs only — never direct DB access.
 - All list endpoints are paginated. All errors use the normalized envelope: `{ error: { code, message, details } }`.
 - Authentication: `POST /api/v1/auth/login` via `SUPABASE_SERVICE_ROLE_KEY`. Validate Bearer tokens with ES256/JWKS (`SUPABASE_URL`, auto-derived from `DATABASE_URL`) or legacy HS256 (`SUPABASE_JWT_SECRET`) — see `trade_surveillance/jwt_verify.py`.
-- Product overview and current UI scope: see the **frontend repo `README.md`** (not maintained in this API repo).
+- **Product spec v2 (canonical):** `docs/SENTINEL_PRODUCT_SPEC_V2.md` — case-centric IA, enums, RBAC, APIs, phased backlog.
 
 ## Product Goals (MVP)
 

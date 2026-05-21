@@ -4,6 +4,8 @@ FastAPI service for **trade surveillance**: REST API over **Supabase PostgreSQL*
 
 The **Next.js** UI lives in a separate repo (`trade-surveillance-web`).
 
+**Product & UX (v2 redesign):** see [`docs/SENTINEL_PRODUCT_SPEC_V2.md`](docs/SENTINEL_PRODUCT_SPEC_V2.md) — enums, RBAC, case-centric IA, API contracts, and implementation phases.
+
 ---
 
 ## Architecture overview
